@@ -192,6 +192,7 @@ function App({ authUser, guestMode, onLogout, theme, onThemeChange }) {
   });
 
   const [activeNav, setActiveNav] = useState("Today");
+  const [searchQuery, setSearchQuery] = useState("");
   const darkMode = theme !== "light";
 
 
@@ -952,7 +953,13 @@ const badges = useMemo(() => {
   );
 
   const renderHabitList = (limit = null) => {
-    const visibleHabits = limit ? habits.slice(0, limit) : habits;
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const searchedHabits = normalizedSearch
+      ? habits.filter((habit) =>
+          `${habit.name} ${habit.category || ""} ${habit.description || ""}`.toLowerCase().includes(normalizedSearch)
+        )
+      : habits;
+    const visibleHabits = limit ? searchedHabits.slice(0, limit) : searchedHabits;
     if (!visibleHabits.length) {
       return (
         <div className="empty-state">
@@ -1098,121 +1105,135 @@ const badges = useMemo(() => {
       {/* MAIN */}
       <main className="main-content">
         {/* TOPBAR */}
-        <header className="topbar">
-          <div>
-            <p className="date-text">{currentDisplayDate}</p>
-            <h1>{activeNav === "Today" ? `${greeting}, ${profileName} 👋` : activeNav}</h1>
+        <header className="topbar premium-topbar">
+          <div className="top-search-wrap">
+            <span className="top-search-icon">⌕</span>
+            <input
+              className="top-search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search habits, goals, or anything..."
+              aria-label="Search habits and goals"
+            />
+            <kbd>Ctrl K</kbd>
           </div>
 
           <div className="top-actions">
             <button
-              className="icon-button theme-cycle-button"
+              type="button"
+              className="theme-selector"
               onClick={() => {
                 const index = THEME_OPTIONS.findIndex((item) => item.id === theme);
                 const next = THEME_OPTIONS[(index + 1) % THEME_OPTIONS.length];
                 onThemeChange(next.id);
               }}
-              title="Cycle theme"
+              title="Switch theme"
             >
-              {THEME_OPTIONS.find((item) => item.id === theme)?.icon || "✦"}
+              <span className="theme-selector-orb">{THEME_OPTIONS.find((item) => item.id === theme)?.icon || "✦"}</span>
+              <span>{THEME_OPTIONS.find((item) => item.id === theme)?.name || "Aurora"}</span>
+              <span className="chevron">⌄</span>
             </button>
 
-            <button type="button" className="notification-button" onClick={() => setActiveNav("Reminders")} title="Open reminders">
-              ♢
+            <button type="button" className="notification-button premium-icon-btn" onClick={() => setActiveNav("Reminders")} title="Open reminders">
+              ♧
               <span className="notification-dot"></span>
             </button>
 
-            <div className="top-avatar">{profileInitial}</div>
+            <button type="button" className="top-profile" onClick={() => setActiveNav("Settings")} title="Open settings">
+              <span className="top-avatar">{profileInitial}</span>
+              <span className="top-profile-copy"><strong>{profileName}</strong><small>Keep Going</small></span>
+              <span className="chevron">⌄</span>
+            </button>
           </div>
         </header>
 
         {activeNav === "Today" && (
           <>
-            <section className="hero-grid">
-              <div className="hero-card">
-                <div className="hero-card-content">
-                  <div>
-                    <p className="eyebrow">YOUR DAILY PROGRESS</p>
-                    <div className="progress-number">{progress}<span>%</span></div>
-                    <p className="progress-message">
-                      {progress >= 75
-                        ? "Amazing! You're crushing it today."
-                        : progress >= 50
-                        ? "Great work! Keep the momentum going."
-                        : "Let's make today productive."}
-                    </p>
-                  </div>
-                  <div className="progress-ring">
-                    <div
-                      className="progress-ring-fill"
-                      style={{ background: `conic-gradient(#8b5cf6 ${progress}%, rgba(255,255,255,0.08) ${progress}% 100%)` }}
-                    >
-                      <div className="progress-ring-inner">
-                        <strong>{completedCount}</strong>
-                        <span>/{habits.length}</span>
-                      </div>
-                    </div>
-                  </div>
+            <section className="dashboard-hero">
+              <div className="hero-copy">
+                <p className="hero-date">{currentDisplayDate}</p>
+                <h1>{greeting}, {profileName} <span>👋</span></h1>
+                <p>Small habits. Big changes. Let's make today count.</p>
+              </div>
+              <div className="hero-microcopy"><span>✦</span><strong>Discipline today,<br />a better you tomorrow.</strong></div>
+            </section>
+
+            <section className="metric-grid">
+              <article className="metric-card metric-progress">
+                <div className="metric-top"><span className="metric-label">TODAY'S PROGRESS</span><button className="metric-menu" type="button">•••</button></div>
+                <div className="metric-body">
+                  <div className="metric-ring" style={{"--progress": `${progress * 3.6}deg`}}><div><strong>{progress}%</strong><small>{completedCount} of {habits.length} habits</small></div></div>
+                  <div className="metric-copy"><strong>{progress >= 75 ? "Great momentum!" : progress >= 50 ? "Keep it going!" : "Let's start strong."}</strong><span>↑ {Math.max(1, Math.round(progress / 8))}% today</span></div>
                 </div>
+              </article>
+
+              <article className="metric-card metric-score">
+                <div className="metric-top"><span className="metric-label">TODAY'S SCORE</span><button className="metric-menu" type="button">•••</button></div>
+                <div className="metric-body metric-simple">
+                  <div className="metric-icon score-orb">★</div>
+                  <div><strong className="metric-big">{todayScore}</strong><span>Good momentum!</span><em>↑ {Math.max(1, Math.round(progress / 15))}%</em></div>
+                </div>
+                <div className="sparkline"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              </article>
+
+              <article className="metric-card metric-streak">
+                <div className="metric-top"><span className="metric-label">CURRENT STREAK</span><button className="metric-menu" type="button">•••</button></div>
+                <div className="metric-body metric-simple">
+                  <div className="metric-icon fire-orb">🔥</div>
+                  <div><strong className="metric-big">{overallStreak}</strong><span>Keep it going!</span><em>↑ +{overallStreak ? 2 : 0} days</em></div>
+                </div>
+                <div className="sparkline warm"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              </article>
+
+              <article className="metric-card metric-health">
+                <div className="metric-top"><span className="metric-label">HEALTH SCORE</span><button className="metric-menu" type="button">•••</button></div>
+                <div className="metric-body metric-simple">
+                  <div className="metric-icon health-orb">♥</div>
+                  <div><strong className="metric-big">{Math.min(100, Math.round(progress * 0.7 + Math.min(30, overallStreak * 2)))}</strong><span>Mind · Body · Routine</span><em>↗ Improving</em></div>
+                </div>
+                <div className="sparkline cyan"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              </article>
+            </section>
+
+            <section className="dashboard-main-grid">
+              <div className="focus-panel panel">
+                <div className="focus-head">
+                  <div><h2>Today's Focus</h2><p>Stay consistent and make your next small win.</p></div>
+                  <button type="button" className="add-habit-btn premium-add" onClick={() => setShowAddModal(true)}><span>＋</span> Add Habit</button>
+                </div>
+                <div className="focus-tabs"><button className="active" type="button">Today ({completedCount + Math.max(0, habits.length - completedCount)})</button><button type="button">This Week</button><button type="button" onClick={() => setActiveNav("Habits")}>All Habits</button></div>
+                {renderHabitList(4)}
               </div>
 
-              <div className="score-card">
-                <div className="score-header">
-                  <div>
-                    <p className="eyebrow">TODAY'S SCORE</p>
-                    <h2>{todayScore}</h2>
+              <div className="dashboard-side-stack">
+                <div className="panel weekly-panel">
+                  <div className="panel-header"><div><p className="eyebrow">ACTIVITY</p><h2>Weekly Progress</h2></div><button className="text-button" type="button" onClick={() => setActiveNav("Analytics")}>View Details →</button></div>
+                  <div className="premium-week-chart">
+                    {[['Mon',55],['Tue',72],['Wed',progress],['Thu',82],['Fri',Math.max(25,progress)],['Sat',68],['Sun',38]].map(([day,value],index)=><div className={`premium-chart-col ${index === 4 ? 'today' : ''}`} key={day}><span>{value}%</span><div><i style={{height:`${value}%`}}></i></div><small>{day}</small></div>)}
                   </div>
-                  <div className="score-icon">⚡</div>
                 </div>
-                <div className="score-bar"><div className="score-bar-fill" style={{ width: `${todayScore}%` }}></div></div>
-                <div className="score-footer"><span>Keep going</span><strong>+{completedCount * 20} XP</strong></div>
+
+                <div className="motivation-card">
+                  <div><p className="eyebrow">A LITTLE REMINDER</p><h3>Small Steps<br />Create Big Results</h3><p>Stay consistent. You're doing great!</p><button type="button" onClick={() => setActiveNav("Habits")}>Keep Going <span>→</span></button></div>
+                  <blockquote>“Discipline is the bridge between goals and success.”</blockquote>
+                </div>
               </div>
             </section>
 
-            <section className="section-header page-section-header">
-              <div>
-                <p className="eyebrow">TODAY'S FOCUS</p>
-                <h2>Stay on track</h2>
+            <section className="vibe-panel panel">
+              <div className="panel-header"><div><h2>Choose Your Vibe</h2><p>Switch themes. Same goals. New you.</p></div><span className="panel-value">{THEME_OPTIONS.find((item) => item.id === theme)?.name}</span></div>
+              <div className="vibe-grid">
+                {THEME_OPTIONS.map((item) => <button type="button" key={item.id} className={`vibe-card vibe-${item.id} ${theme === item.id ? 'selected' : ''}`} onClick={() => onThemeChange(item.id)}><span className="vibe-art"><b>{item.icon}</b></span><span className="vibe-info"><strong>{item.name}</strong><small>{item.description}</small></span>{theme === item.id && <span className="vibe-check">✓</span>}</button>)}
               </div>
-              <button type="button" className="text-button" onClick={() => setActiveNav("Habits")}>
-                View all habits →
-              </button>
             </section>
 
-            {renderHabitList(3)}
-
-            <section className="bottom-grid">
-              <div className="panel">
-                <div className="panel-header">
-                  <div><p className="eyebrow">ACTIVITY</p><h2>This Week</h2></div>
-                  <span className="panel-value">+18%</span>
-                </div>
-                <div className="week-chart">
-                  {[['M',55],['T',72],['W',progress],['T',82],['F',45],['S',68],['S',38]].map(([day,value],index)=>(
-                    <div className="chart-column" key={index}>
-                      <div className="chart-track"><div className="chart-fill" style={{height:`${value}%`}}></div></div>
-                      <span>{day}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="panel streak-panel">
-                <div className="streak-icon">🔥</div>
-                <p className="eyebrow">CURRENT STREAK</p>
-                <div className="streak-number">{overallStreak} <span>days</span></div>
-                <p className="streak-text">{overallStreak > 0 ? "You're on fire! Keep your streak alive." : "Complete a habit today to start your streak."}</p>
-                <p className="streak-text">Best: {bestOverallStreak} days</p>
-                <div className="streak-progress"><div style={{width:`${Math.min(100,overallStreak*10)}%`}}></div></div>
-              </div>
-
-              <div className="panel xp-panel">
-                <div className="xp-top">
-                  <div><p className="eyebrow">EXPERIENCE</p><h2>{totalXp} XP</h2></div>
-                  <div className="xp-icon">✦</div>
-                </div>
-                <div className="xp-progress"><div style={{width:`${Math.min(100,totalXp%100)}%`}}></div></div>
-                <div className="xp-footer"><span>Level {currentLevel}</span><span>{Math.max(100,(Math.floor(totalXp/100)+1)*100)} XP</span></div>
+            <section className="quick-actions-panel">
+              <div><p className="eyebrow">SHORTCUTS</p><h2>Quick Actions</h2></div>
+              <div className="quick-actions">
+                <button type="button" onClick={() => setShowAddModal(true)}><span>＋</span><b>Add Habit</b><small>Create a new routine</small></button>
+                <button type="button" onClick={() => setActiveNav("Calendar")}><span>▣</span><b>View Calendar</b><small>See your history</small></button>
+                <button type="button" onClick={() => setActiveNav("Reminders")}><span>♧</span><b>Set Reminder</b><small>Stay on schedule</small></button>
+                <button type="button" onClick={() => setActiveNav("Analytics")}><span>▥</span><b>View Analytics</b><small>Track improvement</small></button>
               </div>
             </section>
           </>
@@ -2085,11 +2106,8 @@ const badges = useMemo(() => {
           </section>
         )}
 
-      </main>
-
-      {/* ADD HABIT MODAL */}
         {activeNav === "Reminders" && (
-          <>
+          <div className="reminders-page">
             <section className="hero-grid" style={{ marginTop: "22px" }}>
               <div className="hero-card">
                 <div className="hero-card-content">
@@ -2112,7 +2130,7 @@ const badges = useMemo(() => {
                     <p className="eyebrow">BROWSER NOTIFICATIONS</p>
                     <h2 style={{ fontSize: "22px" }}>{notificationPermission === "granted" ? "Enabled" : notificationPermission === "unsupported" ? "Unavailable" : "Off"}</h2>
                   </div>
-                  <div className="score-icon">🔔</div>
+                  <div className="score-icon reminder-bell-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></div>
                 </div>
                 <div className="score-footer">
                   <span>{notificationPermission === "granted" ? "Works while Habbit Tracker is open." : "Allow notifications for reminder alerts."}</span>
@@ -2131,7 +2149,7 @@ const badges = useMemo(() => {
 
             <section className="habits-list">
               {habits.filter((habit) => isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow)).length === 0 ? (
-                <div className="empty-state"><div className="empty-icon">✅</div><h3>You're caught up</h3><p>No missed scheduled habits right now.</p></div>
+                <div className="empty-state"><div className="empty-icon reminder-empty-icon">✓</div><h3>You're caught up</h3><p>No missed scheduled habits right now.</p></div>
               ) : (
                 habits.filter((habit) => isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow)).map((habit) => (
                   <div className="habit-card" key={`missed-${habit.id}`}>
@@ -2161,14 +2179,19 @@ const badges = useMemo(() => {
                         <strong>{habit.name}</strong>
                         <div style={{ marginTop: "4px", color: "#7f89a2", fontSize: "12px" }}>{reminder?.enabled ? `Every day at ${formatReminderTime(reminder.time)}` : "Reminder off"}{snoozed ? ` • Snoozed until ${formatRescheduleTime(rescheduledHabits[habit.id])}` : ""}</div>
                       </div>
-                      <button type="button" className="icon-button" onClick={() => openReminderModal(habit)}>⚙</button>
+                      <button type="button" className="icon-button reminder-settings-btn" onClick={() => openReminderModal(habit)} title="Reminder settings" aria-label={`Reminder settings for ${habit.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="m19.4 15 .1.1a1.8 1.8 0 0 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3.1 1v.2a1.8 1.8 0 0 1-3.6 0v-.2a1.8 1.8 0 0 0-3.1-1l-.1.1a1.8 1.8 0 0 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-1-3.1h-.2a1.8 1.8 0 0 1 0-3.6h.2a1.8 1.8 0 0 0 1-3.1l-.1-.1a1.8 1.8 0 0 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3.1-1v-.2a1.8 1.8 0 0 1 3.6 0v.2a1.8 1.8 0 0 0 3.1 1l.1-.1a1.8 1.8 0 0 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 1 3.1h.2a1.8 1.8 0 0 1 0 3.6h-.2a1.8 1.8 0 0 0-1 3.1Z"/></svg></button>
                     </div>
                   );
                 })}
               </div>
             </section>
-          </>
+          </div>
         )}
+
+      </main>
+
+      {/* ADD HABIT MODAL */}
+
 
       {showAddModal && (
         <div
