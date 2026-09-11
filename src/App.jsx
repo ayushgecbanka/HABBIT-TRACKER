@@ -112,6 +112,7 @@ function App() {
   });
 
   const [calendarDate, setCalendarDate] = useState(new Date());
+  const [analyticsRange, setAnalyticsRange] = useState(7);
 
   const [goals, setGoals] = useState(() => {
     try {
@@ -446,6 +447,93 @@ const badges = useMemo(() => {
     setGoals((currentGoals) => currentGoals.filter((goal) => goal.id !== id));
   };
 
+  const analyticsData = useMemo(() => {
+    const today = new Date();
+    const days = [];
+
+    for (let offset = analyticsRange - 1; offset >= 0; offset -= 1) {
+      const date = new Date(today);
+      date.setHours(0, 0, 0, 0);
+      date.setDate(today.getDate() - offset);
+      const key = getDateKey(date);
+      const completed = habits.filter((habit) => habit.history?.includes(key)).length;
+
+      days.push({
+        key,
+        date,
+        completed,
+        rate: habits.length ? Math.round((completed / habits.length) * 100) : 0,
+      });
+    }
+
+    const totalPossible = days.length * habits.length;
+    const totalCompleted = days.reduce((sum, day) => sum + day.completed, 0);
+    const completionRate = totalPossible
+      ? Math.round((totalCompleted / totalPossible) * 100)
+      : 0;
+    const averagePerDay = days.length ? Math.round((totalCompleted / days.length) * 10) / 10 : 0;
+    const bestDay = days.reduce(
+      (best, day) => (day.rate > best.rate ? day : best),
+      days[0] || { rate: 0, completed: 0, date: today }
+    );
+
+    const categoryMap = {};
+    habits.forEach((habit) => {
+      const category = habit.category || "Other";
+      if (!categoryMap[category]) {
+        categoryMap[category] = { name: category, completed: 0, possible: days.length };
+      }
+      const completedInRange = days.reduce(
+        (count, day) => count + (habit.history?.includes(day.key) ? 1 : 0),
+        0
+      );
+      categoryMap[category].completed += completedInRange;
+      categoryMap[category].possible += 0;
+    });
+
+    const categories = Object.values(categoryMap)
+      .map((item) => ({
+        ...item,
+        possible: days.length * habits.filter((habit) => (habit.category || "Other") === item.name).length,
+        rate: days.length
+          ? Math.round(
+              (item.completed /
+                Math.max(
+                  1,
+                  days.length *
+                    habits.filter((habit) => (habit.category || "Other") === item.name).length
+                )) *
+                100
+            )
+          : 0,
+      }))
+      .sort((a, b) => b.rate - a.rate);
+
+    const habitPerformance = habits
+      .map((habit) => {
+        const completed = days.reduce(
+          (count, day) => count + (habit.history?.includes(day.key) ? 1 : 0),
+          0
+        );
+        return {
+          ...habit,
+          completed,
+          rate: days.length ? Math.round((completed / days.length) * 100) : 0,
+        };
+      })
+      .sort((a, b) => b.rate - a.rate);
+
+    return {
+      days,
+      totalCompleted,
+      completionRate,
+      averagePerDay,
+      bestDay,
+      categories,
+      habitPerformance,
+    };
+  }, [habits, analyticsRange]);
+
   return (
     <div className={darkMode ? "app dark" : "app light"}>
       {/* SIDEBAR */}
@@ -687,7 +775,7 @@ const badges = useMemo(() => {
           </>
         )}
 
-        {(activeNav === "Today" || activeNav === "Analytics") && (
+        {activeNav === "Today" && (
           <>
         {/* BOTTOM GRID */}
         <section className="bottom-grid">
@@ -766,6 +854,209 @@ const badges = useMemo(() => {
             </div>
           </div>
         </section>
+          </>
+        )}
+
+        {activeNav === "Analytics" && (
+          <>
+            <section className="section-header" style={{ marginTop: "22px" }}>
+              <div>
+                <p className="eyebrow">INSIGHTS & TRENDS</p>
+                <h2>Analytics Overview</h2>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {[7, 30, 90].map((range) => (
+                  <button
+                    type="button"
+                    key={range}
+                    className="icon-button"
+                    onClick={() => setAnalyticsRange(range)}
+                    style={{
+                      padding: "9px 12px",
+                      minWidth: "54px",
+                      border: analyticsRange === range
+                        ? "1px solid rgba(139,92,246,.65)"
+                        : undefined,
+                      background: analyticsRange === range
+                        ? "rgba(139,92,246,.16)"
+                        : undefined,
+                    }}
+                  >
+                    {range}D
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: "14px",
+                marginTop: "18px",
+              }}
+            >
+              {[
+                ["Completion rate", `${analyticsData.completionRate}%`, "◎"],
+                ["Completed", analyticsData.totalCompleted, "✓"],
+                ["Daily average", analyticsData.averagePerDay, "◒"],
+                ["Best day", `${analyticsData.bestDay.rate}%`, "✦"],
+              ].map(([label, value, icon]) => (
+                <div className="panel" key={label} style={{ padding: "18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                    <div>
+                      <p className="eyebrow">{label}</p>
+                      <h2 style={{ margin: "7px 0 0" }}>{value}</h2>
+                    </div>
+                    <div className="score-icon" style={{ width: "40px", height: "40px" }}>{icon}</div>
+                  </div>
+                </div>
+              ))}
+            </section>
+
+            {habits.length === 0 ? (
+              <section className="panel" style={{ marginTop: "16px", padding: "32px", textAlign: "center" }}>
+                <div style={{ fontSize: "38px" }}>📊</div>
+                <h3 style={{ margin: "10px 0 6px" }}>No analytics yet</h3>
+                <p style={{ color: "#8993ab", margin: 0 }}>Create and complete habits to build your performance history.</p>
+              </section>
+            ) : (
+              <>
+                <section className="panel" style={{ marginTop: "16px", padding: "18px" }}>
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">PERFORMANCE</p>
+                      <h2>Completion trend</h2>
+                    </div>
+                    <span className="panel-value">Last {analyticsRange} days</span>
+                  </div>
+
+                  <div
+                    style={{
+                      height: "230px",
+                      display: "flex",
+                      alignItems: "flex-end",
+                      gap: analyticsRange <= 7 ? "10px" : "4px",
+                      paddingTop: "18px",
+                      overflowX: "auto",
+                    }}
+                  >
+                    {analyticsData.days.map((day) => (
+                      <div
+                        key={day.key}
+                        style={{
+                          flex: "1 0 18px",
+                          minWidth: analyticsRange <= 7 ? "36px" : "18px",
+                          height: "100%",
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "flex-end",
+                          alignItems: "center",
+                          gap: "7px",
+                        }}
+                      >
+                        <span style={{ fontSize: "10px", color: "#8993ab" }}>{day.rate}%</span>
+                        <div
+                          title={`${day.date.toLocaleDateString()} • ${day.completed}/${habits.length} completed`}
+                          style={{
+                            width: "100%",
+                            maxWidth: "34px",
+                            height: `${Math.max(6, day.rate * 1.75)}px`,
+                            borderRadius: "9px 9px 4px 4px",
+                            background: "linear-gradient(180deg, #a78bfa, #6366f1)",
+                            transition: "height .25s ease",
+                          }}
+                        ></div>
+                        <span style={{ fontSize: "10px", color: "#68728a" }}>
+                          {analyticsRange <= 14
+                            ? day.date.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)
+                            : day.date.getDate()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                    gap: "16px",
+                    marginTop: "16px",
+                  }}
+                >
+                  <div className="panel" style={{ padding: "18px" }}>
+                    <div className="panel-header">
+                      <div>
+                        <p className="eyebrow">CATEGORIES</p>
+                        <h2>Category performance</h2>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: "14px", marginTop: "14px" }}>
+                      {analyticsData.categories.length === 0 ? (
+                        <p style={{ color: "#8993ab" }}>No category data yet.</p>
+                      ) : (
+                        analyticsData.categories.map((category) => (
+                          <div key={category.name}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "7px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 700 }}>{category.name}</span>
+                              <span style={{ fontSize: "11px", color: "#9aa4ba" }}>{category.rate}%</span>
+                            </div>
+                            <div style={{ height: "8px", borderRadius: "999px", background: "rgba(255,255,255,.07)", overflow: "hidden" }}>
+                              <div style={{ width: `${category.rate}%`, height: "100%", borderRadius: "inherit", background: "linear-gradient(90deg, #8b5cf6, #6366f1)" }}></div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="panel" style={{ padding: "18px" }}>
+                    <div className="panel-header">
+                      <div>
+                        <p className="eyebrow">HABITS</p>
+                        <h2>Top performers</h2>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
+                      {analyticsData.habitPerformance.map((habit, index) => (
+                        <div key={habit.id} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <div style={{ width: "28px", height: "28px", borderRadius: "9px", display: "grid", placeItems: "center", background: "rgba(139,92,246,.12)", fontSize: "13px", fontWeight: 800 }}>{index + 1}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                              <span style={{ fontSize: "12px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{habit.name}</span>
+                              <span style={{ fontSize: "11px", color: "#7ee2a8", fontWeight: 800 }}>{habit.rate}%</span>
+                            </div>
+                            <div style={{ height: "6px", borderRadius: "999px", background: "rgba(255,255,255,.06)", marginTop: "6px", overflow: "hidden" }}>
+                              <div style={{ width: `${habit.rate}%`, height: "100%", background: habit.rate >= 75 ? "#34d399" : "#8b5cf6", borderRadius: "inherit" }}></div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="panel" style={{ marginTop: "16px", padding: "18px" }}>
+                  <div className="panel-header">
+                    <div>
+                      <p className="eyebrow">STREAKS</p>
+                      <h2>Consistency snapshot</h2>
+                    </div>
+                    <span className="panel-value">Best overall: {bestOverallStreak} days</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "10px", marginTop: "14px" }}>
+                    {analyticsData.habitPerformance.map((habit) => (
+                      <div key={habit.id} style={{ padding: "13px", borderRadius: "13px", background: "rgba(255,255,255,.025)", border: "1px solid rgba(255,255,255,.06)" }}>
+                        <div style={{ fontSize: "18px" }}>{habit.icon}</div>
+                        <strong style={{ display: "block", marginTop: "7px", fontSize: "12px" }}>{habit.name}</strong>
+                        <span style={{ display: "block", marginTop: "4px", color: "#8993ab", fontSize: "11px" }}>🔥 {calculateStreak(habit.history || [])} day streak</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </>
+            )}
           </>
         )}
 
