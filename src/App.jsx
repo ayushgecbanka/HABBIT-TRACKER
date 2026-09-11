@@ -113,9 +113,33 @@ function App() {
 
   const [calendarDate, setCalendarDate] = useState(new Date());
 
+  const [goals, setGoals] = useState(() => {
+    try {
+      const savedGoals = localStorage.getItem("habbit-goals");
+      return savedGoals ? JSON.parse(savedGoals) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [editingGoalId, setEditingGoalId] = useState(null);
+  const [newGoal, setNewGoal] = useState({
+    name: "",
+    category: "Personal",
+    target: 30,
+    progress: 0,
+    dueDate: "",
+    icon: "🎯",
+  });
+
   useEffect(() => {
     localStorage.setItem("habbit-habits", JSON.stringify(habits));
   }, [habits]);
+
+  useEffect(() => {
+    localStorage.setItem("habbit-goals", JSON.stringify(goals));
+  }, [goals]);
 
   const completedCount = useMemo(
     () => habits.filter((habit) => isCompletedToday(habit)).length,
@@ -258,6 +282,99 @@ function App() {
     });
   };
 
+  const resetGoalForm = () => {
+    setNewGoal({
+      name: "",
+      category: "Personal",
+      target: 30,
+      progress: 0,
+      dueDate: "",
+      icon: "🎯",
+    });
+    setEditingGoalId(null);
+  };
+
+  const openGoalModal = (goal = null) => {
+    if (goal) {
+      setEditingGoalId(goal.id);
+      setNewGoal({
+        name: goal.name,
+        category: goal.category,
+        target: goal.target,
+        progress: goal.progress,
+        dueDate: goal.dueDate || "",
+        icon: goal.icon || "🎯",
+      });
+    } else {
+      resetGoalForm();
+    }
+    setShowGoalModal(true);
+  };
+
+  const closeGoalModal = () => {
+    setShowGoalModal(false);
+    resetGoalForm();
+  };
+
+  const handleGoalSubmit = (event) => {
+    event.preventDefault();
+    if (!newGoal.name.trim()) return;
+
+    const target = Math.max(1, Number(newGoal.target) || 1);
+    const progressValue = Math.min(
+      target,
+      Math.max(0, Number(newGoal.progress) || 0)
+    );
+
+    if (editingGoalId !== null) {
+      setGoals((currentGoals) =>
+        currentGoals.map((goal) =>
+          goal.id === editingGoalId
+            ? {
+                ...goal,
+                name: newGoal.name.trim(),
+                category: newGoal.category,
+                target,
+                progress: progressValue,
+                dueDate: newGoal.dueDate,
+                icon: newGoal.icon || "🎯",
+              }
+            : goal
+        )
+      );
+    } else {
+      setGoals((currentGoals) => [
+        ...currentGoals,
+        {
+          id: Date.now(),
+          name: newGoal.name.trim(),
+          category: newGoal.category,
+          target,
+          progress: progressValue,
+          dueDate: newGoal.dueDate,
+          icon: newGoal.icon || "🎯",
+        },
+      ]);
+    }
+
+    closeGoalModal();
+  };
+
+  const updateGoalProgress = (id, amount) => {
+    setGoals((currentGoals) =>
+      currentGoals.map((goal) => ({
+        ...goal,
+        progress: goal.id === id
+          ? Math.min(goal.target, Math.max(0, goal.progress + amount))
+          : goal.progress,
+      }))
+    );
+  };
+
+  const deleteGoal = (id) => {
+    setGoals((currentGoals) => currentGoals.filter((goal) => goal.id !== id));
+  };
+
   return (
     <div className={darkMode ? "app dark" : "app light"}>
       {/* SIDEBAR */}
@@ -320,7 +437,7 @@ function App() {
         <header className="topbar">
           <div>
             <p className="date-text">Wednesday, September 11</p>
-            <h1>Good evening, Ayush 👋</h1>
+            <h1>{activeNav === "Today" ? "Good evening, Ayush 👋" : activeNav}</h1>
           </div>
 
           <div className="top-actions">
@@ -341,6 +458,8 @@ function App() {
           </div>
         </header>
 
+        {(activeNav === "Today" || activeNav === "Habits") && (
+          <>
         {/* HERO */}
         <section className="hero-grid">
           <div className="hero-card">
@@ -493,6 +612,11 @@ function App() {
           )}
         </section>
 
+          </>
+        )}
+
+        {(activeNav === "Today" || activeNav === "Analytics") && (
+          <>
         {/* BOTTOM GRID */}
         <section className="bottom-grid">
           <div className="panel">
@@ -570,7 +694,11 @@ function App() {
             </div>
           </div>
         </section>
+          </>
+        )}
 
+        {activeNav === "Calendar" && (
+          <>
         {/* CALENDAR HISTORY */}
         <section className="panel calendar-panel" style={{ marginTop: "22px" }}>
           <div className="panel-header">
@@ -701,6 +829,181 @@ function App() {
             <span>Every completed day is saved automatically.</span>
           </div>
         </section>
+          </>
+        )}
+
+        {activeNav === "Goals" && (
+          <>
+        {/* GOALS */}
+        <section className="panel goals-panel" style={{ marginTop: "22px" }}>
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">YOUR TARGETS</p>
+              <h2>Goals</h2>
+            </div>
+
+            <button
+              type="button"
+              className="add-habit-btn"
+              onClick={() => openGoalModal()}
+            >
+              <span>+</span>
+              Add Goal
+            </button>
+          </div>
+
+          {goals.length === 0 ? (
+            <div
+              style={{
+                padding: "28px 10px 12px",
+                textAlign: "center",
+                color: "#8993ab",
+              }}
+            >
+              <div style={{ fontSize: "34px", marginBottom: "8px" }}>🎯</div>
+              <strong style={{ color: "inherit", fontSize: "15px" }}>
+                No goals yet
+              </strong>
+              <p style={{ margin: "6px 0 0", fontSize: "12px" }}>
+                Set a target and track your progress step by step.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: "12px" }}>
+              {goals.map((goal) => {
+                const percentage = Math.round((goal.progress / goal.target) * 100);
+                const completed = goal.progress >= goal.target;
+
+                return (
+                  <div
+                    key={goal.id}
+                    style={{
+                      padding: "16px",
+                      borderRadius: "16px",
+                      border: "1px solid rgba(255,255,255,.07)",
+                      background: "rgba(255,255,255,.025)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                      }}
+                    >
+                      <div style={{ fontSize: "26px" }}>{goal.icon}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: "12px",
+                            alignItems: "center",
+                          }}
+                        >
+                          <strong style={{ fontSize: "15px" }}>{goal.name}</strong>
+                          <span
+                            style={{
+                              fontSize: "13px",
+                              fontWeight: 800,
+                              color: completed ? "#7ee2a8" : "#a78bfa",
+                            }}
+                          >
+                            {percentage}%
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            marginTop: "5px",
+                            fontSize: "11px",
+                            color: "#7f89a2",
+                          }}
+                        >
+                          {goal.category} • {goal.progress}/{goal.target}
+                          {goal.dueDate ? ` • Due ${goal.dueDate}` : ""}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        height: "7px",
+                        borderRadius: "999px",
+                        background: "rgba(255,255,255,.07)",
+                        overflow: "hidden",
+                        margin: "13px 0",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${Math.min(100, percentage)}%`,
+                          height: "100%",
+                          borderRadius: "inherit",
+                          background: completed
+                            ? "#34d399"
+                            : "linear-gradient(90deg, #8b5cf6, #6366f1)",
+                          transition: "width .25s ease",
+                        }}
+                      ></div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "8px",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          onClick={() => updateGoalProgress(goal.id, -1)}
+                          disabled={goal.progress <= 0}
+                          title="Decrease progress"
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          onClick={() => updateGoalProgress(goal.id, 1)}
+                          disabled={completed}
+                          title="Increase progress"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          onClick={() => openGoalModal(goal)}
+                          title="Edit goal"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          onClick={() => deleteGoal(goal.id)}
+                          title="Delete goal"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+          </>
+        )}
+
       </main>
 
       {/* ADD HABIT MODAL */}
@@ -816,6 +1119,132 @@ function App() {
                   className="create-habit-btn"
                 >
                   Create Habit
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+
+      {/* GOAL MODAL */}
+      {showGoalModal && (
+        <div className="modal-overlay" onClick={closeGoalModal}>
+          <div
+            className="modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">TARGET PLANNER</p>
+                <h2>{editingGoalId !== null ? "Edit Goal" : "Create Goal"}</h2>
+                <p>Set a measurable target and keep moving forward.</p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeGoalModal}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleGoalSubmit}>
+              <div className="form-group">
+                <label>Goal Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Read 10 books"
+                  value={newGoal.name}
+                  onChange={(event) =>
+                    setNewGoal({ ...newGoal, name: event.target.value })
+                  }
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Category</label>
+                  <select
+                    value={newGoal.category}
+                    onChange={(event) =>
+                      setNewGoal({ ...newGoal, category: event.target.value })
+                    }
+                  >
+                    <option>Personal</option>
+                    <option>Fitness</option>
+                    <option>Work</option>
+                    <option>Learning</option>
+                    <option>Health</option>
+                    <option>Finance</option>
+                    <option>Coding</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Target</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newGoal.target}
+                    onChange={(event) =>
+                      setNewGoal({ ...newGoal, target: event.target.value })
+                    }
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Current Progress</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newGoal.progress}
+                    onChange={(event) =>
+                      setNewGoal({ ...newGoal, progress: event.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Target Date</label>
+                  <input
+                    type="date"
+                    value={newGoal.dueDate}
+                    onChange={(event) =>
+                      setNewGoal({ ...newGoal, dueDate: event.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Icon</label>
+                <input
+                  type="text"
+                  maxLength="2"
+                  value={newGoal.icon}
+                  onChange={(event) =>
+                    setNewGoal({ ...newGoal, icon: event.target.value })
+                  }
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="cancel-btn"
+                  onClick={closeGoalModal}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="create-habit-btn">
+                  {editingGoalId !== null ? "Save Changes" : "Create Goal"}
                 </button>
               </div>
             </form>
