@@ -8,6 +8,42 @@ const getDateKey = (date = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
+const parseHabitTime = (time = "") => {
+  if (!time || time.toLowerCase() === "all day") return null;
+  const match = time.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem) {
+    if (hours === 12) hours = 0;
+    if (meridiem === "PM") hours += 12;
+  }
+  if (hours > 23 || minutes > 59) return null;
+  return { hours, minutes };
+};
+
+const formatReminderTime = (time = "") => {
+  const parsed = parseHabitTime(time);
+  if (!parsed) return time || "Not set";
+  const date = new Date();
+  date.setHours(parsed.hours, parsed.minutes, 0, 0);
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
+
+const isHabitOverdueToday = (habit, reminders, rescheduledHabits = {}, now = new Date()) => {
+  if (isCompletedToday(habit)) return false;
+  const snoozedUntil = Number(rescheduledHabits[habit.id] || 0);
+  if (snoozedUntil > now.getTime()) return false;
+  const reminder = reminders[habit.id];
+  const scheduledTime = reminder?.enabled ? reminder.time : habit.time;
+  const parsed = parseHabitTime(scheduledTime);
+  if (!parsed) return false;
+  const due = new Date(now);
+  due.setHours(parsed.hours, parsed.minutes, 0, 0);
+  return now > due;
+};
+
 const isCompletedToday = (habit) => {
   return habit.history?.includes(getDateKey()) ?? habit.completed;
 };
@@ -114,6 +150,32 @@ function App() {
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [analyticsRange, setAnalyticsRange] = useState(7);
 
+  const [reminders, setReminders] = useState(() => {
+    try {
+      const savedReminders = localStorage.getItem("habbit-reminders");
+      return savedReminders ? JSON.parse(savedReminders) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [rescheduledHabits, setRescheduledHabits] = useState(() => {
+    try {
+      const savedRescheduled = localStorage.getItem("habbit-rescheduled");
+      return savedRescheduled ? JSON.parse(savedRescheduled) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [notificationPermission, setNotificationPermission] = useState(
+    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
+  );
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [selectedReminderHabit, setSelectedReminderHabit] = useState(null);
+  const [reminderDraft, setReminderDraft] = useState({ enabled: true, time: "09:00" });
+  const [reminderNow, setReminderNow] = useState(() => new Date());
+
   const [goals, setGoals] = useState(() => {
     try {
       const savedGoals = localStorage.getItem("habbit-goals");
@@ -141,6 +203,47 @@ function App() {
   useEffect(() => {
     localStorage.setItem("habbit-goals", JSON.stringify(goals));
   }, [goals]);
+
+  useEffect(() => {
+    localStorage.setItem("habbit-reminders", JSON.stringify(reminders));
+  }, [reminders]);
+
+  useEffect(() => {
+    localStorage.setItem("habbit-rescheduled", JSON.stringify(rescheduledHabits));
+  }, [rescheduledHabits]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setReminderNow(new Date()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const today = getDateKey();
+    const minuteKey = `${today}-${String(reminderNow.getHours()).padStart(2, "0")}-${String(reminderNow.getMinutes()).padStart(2, "0")}`;
+    const sentKey = `habbit-reminder-sent-${minuteKey}`;
+    const sent = JSON.parse(localStorage.getItem(sentKey) || "[]");
+    const dueIds = [];
+
+    habits.forEach((habit) => {
+      const reminder = reminders[habit.id];
+      if (!reminder?.enabled || isCompletedToday(habit)) return;
+      const parsed = parseHabitTime(reminder.time);
+      if (!parsed) return;
+      if (parsed.hours === reminderNow.getHours() && parsed.minutes === reminderNow.getMinutes()) {
+        const snoozedUntil = Number(rescheduledHabits[habit.id] || 0);
+        if (snoozedUntil > Date.now()) return;
+        if (!sent.includes(habit.id)) {
+          dueIds.push(habit.id);
+          new Notification("Habbit Tracker reminder", {
+            body: `${habit.icon || "✨"} Time for ${habit.name}. Keep your streak alive!`,
+          });
+        }
+      }
+    });
+
+    if (dueIds.length) localStorage.setItem(sentKey, JSON.stringify([...sent, ...dueIds]));
+  }, [habits, reminders, rescheduledHabits, reminderNow]);
 
   const completedCount = useMemo(
     () => habits.filter((habit) => isCompletedToday(habit)).length,
@@ -195,6 +298,86 @@ function App() {
 
     return calculateBestStreak([...completedDays]);
   }, [habits]);
+
+  const routineHealth = useMemo(() => {
+    const today = new Date();
+    const lookbackDays = 14;
+    const dayKeys = [];
+
+    for (let offset = lookbackDays - 1; offset >= 0; offset -= 1) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - offset);
+      dayKeys.push(getDateKey(date));
+    }
+
+    const totalPossible = habits.length * lookbackDays;
+    const totalCompleted = habits.reduce(
+      (sum, habit) =>
+        sum + dayKeys.filter((key) => (habit.history || []).includes(key)).length,
+      0
+    );
+
+    const consistency = totalPossible
+      ? Math.round((totalCompleted / totalPossible) * 100)
+      : 0;
+
+    const activeReminders = habits.filter((habit) => reminders[habit.id]?.enabled).length;
+    const reminderCoverage = habits.length
+      ? Math.round((activeReminders / habits.length) * 100)
+      : 0;
+
+    const stableHabits = habits.filter((habit) => {
+      const streak = calculateStreak(habit.history || []);
+      return streak >= 3;
+    }).length;
+    const streakStability = habits.length
+      ? Math.round((stableHabits / habits.length) * 100)
+      : 0;
+
+    const recentMissed = habits.reduce((sum, habit) => {
+      const recent = dayKeys.filter((key) => !(habit.history || []).includes(key));
+      return sum + recent.length;
+    }, 0);
+    const recovery = totalPossible
+      ? Math.max(0, 100 - Math.round((recentMissed / totalPossible) * 100))
+      : 0;
+
+    const score = habits.length
+      ? Math.round(
+          consistency * 0.45 +
+            reminderCoverage * 0.15 +
+            streakStability * 0.2 +
+            recovery * 0.2
+        )
+      : 0;
+
+    let label = "Getting started";
+    if (score >= 90) label = "Excellent routine";
+    else if (score >= 75) label = "Strong routine";
+    else if (score >= 55) label = "Building momentum";
+    else if (score >= 35) label = "Needs attention";
+
+    const insights = [];
+    if (!habits.length) {
+      insights.push("Create your first habit to start measuring routine health.");
+    } else {
+      if (consistency < 60) insights.push("Focus on completing a few core habits consistently before adding more.");
+      if (reminderCoverage < 70) insights.push("Add reminders to more habits so your routine is easier to follow.");
+      if (streakStability < 50) insights.push("Protect a small 3-day streak on your most important habits.");
+      if (recovery >= 85) insights.push("Great recovery — missed routines are not holding your score back.");
+      if (!insights.length) insights.push("Your routine is balanced. Keep the current rhythm and protect your streaks.");
+    }
+
+    return {
+      score,
+      label,
+      consistency,
+      reminderCoverage,
+      streakStability,
+      recovery,
+      insights,
+    };
+  }, [habits, reminders]);
 
 const badges = useMemo(() => {
     const totalCompletions = habits.reduce(
@@ -312,6 +495,16 @@ const badges = useMemo(() => {
     setHabits((currentHabits) =>
       currentHabits.filter((habit) => habit.id !== id)
     );
+    setReminders((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setRescheduledHabits((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleAddHabit = (event) => {
@@ -341,6 +534,74 @@ const badges = useMemo(() => {
     });
 
     setShowAddModal(false);
+  };
+
+  const requestNotificationPermission = async () => {
+    if (typeof Notification === "undefined") {
+      setNotificationPermission("unsupported");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+  };
+
+  const getDefaultReminderTime = (habit) => {
+    const parsed = parseHabitTime(habit?.time);
+    if (!parsed) return "09:00";
+    return `${String(parsed.hours).padStart(2, "0")}:${String(parsed.minutes).padStart(2, "0")}`;
+  };
+
+  const openReminderModal = (habit) => {
+    const existing = reminders[habit.id];
+    setSelectedReminderHabit(habit);
+    setReminderDraft({
+      enabled: existing?.enabled ?? true,
+      time: existing?.time || getDefaultReminderTime(habit),
+    });
+    setShowReminderModal(true);
+  };
+
+  const closeReminderModal = () => {
+    setShowReminderModal(false);
+    setSelectedReminderHabit(null);
+    setReminderDraft({ enabled: true, time: "09:00" });
+  };
+
+  const saveReminder = (event) => {
+    event.preventDefault();
+    if (!selectedReminderHabit) return;
+    setReminders((current) => ({
+      ...current,
+      [selectedReminderHabit.id]: {
+        enabled: Boolean(reminderDraft.enabled),
+        time: reminderDraft.time,
+      },
+    }));
+    closeReminderModal();
+  };
+
+  const snoozeHabit = (habitId, minutes = 60) => {
+    setRescheduledHabits((current) => ({
+      ...current,
+      [habitId]: Date.now() + minutes * 60 * 1000,
+    }));
+  };
+
+  const rescheduleToTomorrow = (habitId) => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    setRescheduledHabits((current) => ({
+      ...current,
+      [habitId]: tomorrow.getTime(),
+    }));
+  };
+
+  const formatRescheduleTime = (timestamp) => {
+    if (!timestamp) return "";
+    const date = new Date(Number(timestamp));
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   };
 
   const closeModal = () => {
@@ -552,9 +813,11 @@ const badges = useMemo(() => {
             ["Today", "⌂"],
             ["Habits", "✓"],
             ["Analytics", "◒"],
+            ["Health Score", "♥"],
             ["Calendar", "▦"],
             ["Goals", "◎"],
             ["Rewards", "✦"],
+            ["Reminders", "🔔"],
           ].map(([name, icon]) => (
             <button
               key={name}
@@ -754,10 +1017,23 @@ const badges = useMemo(() => {
                 <div className="habit-status">
                   {isCompletedToday(habit) ? (
                     <span className="done-label">Completed</span>
+                  ) : rescheduledHabits[habit.id] && Number(rescheduledHabits[habit.id]) > Date.now() ? (
+                    <span className="pending-label">Snoozed</span>
+                  ) : isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow) ? (
+                    <span className="pending-label">Missed</span>
                   ) : (
                     <span className="pending-label">Pending</span>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => openReminderModal(habit)}
+                  title="Reminder settings"
+                >
+                  🔔
+                </button>
 
                 <button
                   type="button"
@@ -1530,9 +1806,197 @@ const badges = useMemo(() => {
           </>
         )}
 
+
+        {activeNav === "Health Score" && (
+          <>
+            <section className="hero-grid" style={{ marginTop: "22px" }}>
+              <div className="hero-card">
+                <div className="hero-card-content">
+                  <div>
+                    <p className="eyebrow">ROUTINE HEALTH</p>
+                    <div className="progress-number">{routineHealth.score}</div>
+                    <p className="progress-message">{routineHealth.label} · measured across your last 14 days.</p>
+                  </div>
+                  <div className="progress-ring">
+                    <div
+                      className="progress-ring-fill"
+                      style={{
+                        background: `conic-gradient(#8b5cf6 ${routineHealth.score}%, rgba(255,255,255,.08) 0% 100%)`,
+                      }}
+                    >
+                      <div className="progress-ring-inner">
+                        <strong>{routineHealth.score}</strong>
+                        <span>/100</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="score-card">
+                <div className="score-header">
+                  <div>
+                    <p className="eyebrow">WHAT IT MEASURES</p>
+                    <h2 style={{ fontSize: "22px" }}>Your routine quality</h2>
+                  </div>
+                  <div className="score-icon">♥</div>
+                </div>
+                <div className="score-footer">
+                  <span>Consistency, reminders, streak stability and recovery.</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="section-header" style={{ marginTop: "24px" }}>
+              <div>
+                <p className="eyebrow">SCORE BREAKDOWN</p>
+                <h2>Routine Health</h2>
+              </div>
+              <div className="panel-value">Last 14 days</div>
+            </section>
+
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "14px",
+              }}
+            >
+              {[
+                ["Consistency", routineHealth.consistency, "How often your habits were completed."],
+                ["Reminder coverage", routineHealth.reminderCoverage, "Habits with an active reminder."],
+                ["Streak stability", routineHealth.streakStability, "Habits holding a 3+ day streak."],
+                ["Recovery", routineHealth.recovery, "How well missed days are being absorbed."],
+              ].map(([label, value, description]) => (
+                <div className="panel" key={label} style={{ padding: "18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "baseline" }}>
+                    <strong>{label}</strong>
+                    <span style={{ fontSize: "22px", fontWeight: 800 }}>{value}%</span>
+                  </div>
+                  <div style={{ height: "8px", borderRadius: "999px", background: "rgba(255,255,255,.07)", overflow: "hidden", marginTop: "12px" }}>
+                    <div style={{ width: `${value}%`, height: "100%", borderRadius: "inherit", background: "linear-gradient(90deg, #8b5cf6, #a78bfa)" }} />
+                  </div>
+                  <p style={{ margin: "10px 0 0", color: "#8993ab", fontSize: "12px", lineHeight: 1.5 }}>{description}</p>
+                </div>
+              ))}
+            </section>
+
+            <section className="panel" style={{ marginTop: "18px", padding: "18px" }}>
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">COACHING SIGNALS</p>
+                  <h2>What to focus on next</h2>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: "10px" }}>
+                {routineHealth.insights.map((insight) => (
+                  <div
+                    key={insight}
+                    style={{
+                      display: "flex",
+                      gap: "10px",
+                      alignItems: "flex-start",
+                      padding: "12px 14px",
+                      borderRadius: "12px",
+                      background: "rgba(139,92,246,.07)",
+                      border: "1px solid rgba(139,92,246,.12)",
+                    }}
+                  >
+                    <span>✦</span>
+                    <span style={{ color: "#c8cee0", fontSize: "13px", lineHeight: 1.5 }}>{insight}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </>
+        )}
+
       </main>
 
       {/* ADD HABIT MODAL */}
+        {activeNav === "Reminders" && (
+          <>
+            <section className="hero-grid" style={{ marginTop: "22px" }}>
+              <div className="hero-card">
+                <div className="hero-card-content">
+                  <div>
+                    <p className="eyebrow">SMART REMINDERS</p>
+                    <div className="progress-number">{habits.filter((habit) => reminders[habit.id]?.enabled).length}</div>
+                    <p className="progress-message">Active reminders configured for your habits.</p>
+                  </div>
+                  <div className="progress-ring">
+                    <div className="progress-ring-fill" style={{ background: `conic-gradient(#8b5cf6 ${habits.length ? Math.round((habits.filter((habit) => reminders[habit.id]?.enabled).length / habits.length) * 100) : 0}%, rgba(255,255,255,0.08) 0% 100%)` }}>
+                      <div className="progress-ring-inner"><strong>{habits.filter((habit) => reminders[habit.id]?.enabled).length}</strong><span>/{habits.length}</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="score-card">
+                <div className="score-header">
+                  <div>
+                    <p className="eyebrow">BROWSER NOTIFICATIONS</p>
+                    <h2 style={{ fontSize: "22px" }}>{notificationPermission === "granted" ? "Enabled" : notificationPermission === "unsupported" ? "Unavailable" : "Off"}</h2>
+                  </div>
+                  <div className="score-icon">🔔</div>
+                </div>
+                <div className="score-footer">
+                  <span>{notificationPermission === "granted" ? "Works while Habbit Tracker is open." : "Allow notifications for reminder alerts."}</span>
+                  {notificationPermission !== "granted" && notificationPermission !== "unsupported" ? <button type="button" className="add-habit-btn" onClick={requestNotificationPermission}>Enable</button> : null}
+                </div>
+              </div>
+            </section>
+
+            <section className="section-header" style={{ marginTop: "24px" }}>
+              <div>
+                <p className="eyebrow">FOLLOW-UP</p>
+                <h2>Missed Habits</h2>
+              </div>
+              <div className="panel-value">{habits.filter((habit) => isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow)).length} missed</div>
+            </section>
+
+            <section className="habits-list">
+              {habits.filter((habit) => isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow)).length === 0 ? (
+                <div className="empty-state"><div className="empty-icon">✅</div><h3>You're caught up</h3><p>No missed scheduled habits right now.</p></div>
+              ) : (
+                habits.filter((habit) => isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow)).map((habit) => (
+                  <div className="habit-card" key={`missed-${habit.id}`}>
+                    <div className="habit-icon">{habit.icon}</div>
+                    <div className="habit-info">
+                      <h3>{habit.name}</h3>
+                      <div className="habit-meta"><span>{habit.category}</span><span>•</span><span>{reminders[habit.id]?.enabled ? formatReminderTime(reminders[habit.id].time) : habit.time}</span></div>
+                    </div>
+                    <div className="habit-status"><span className="pending-label">Missed</span></div>
+                    <button type="button" className="icon-button" onClick={() => snoozeHabit(habit.id, 60)} title="Snooze for 1 hour">+1h</button>
+                    <button type="button" className="icon-button" onClick={() => rescheduleToTomorrow(habit.id)} title="Reschedule to tomorrow">Tomorrow</button>
+                  </div>
+                ))
+              )}
+            </section>
+
+            <section className="panel" style={{ marginTop: "22px" }}>
+              <div className="panel-header"><div><p className="eyebrow">YOUR SCHEDULE</p><h2>Habit Reminders</h2></div></div>
+              <div style={{ display: "grid", gap: "12px" }}>
+                {habits.length === 0 ? <p style={{ color: "#8993ab" }}>Create a habit first, then set its reminder here.</p> : habits.map((habit) => {
+                  const reminder = reminders[habit.id];
+                  const snoozed = Number(rescheduledHabits[habit.id] || 0) > Date.now();
+                  return (
+                    <div key={`reminder-${habit.id}`} style={{ display: "flex", gap: "12px", alignItems: "center", padding: "14px", borderRadius: "14px", border: "1px solid rgba(255,255,255,.07)", background: "rgba(255,255,255,.025)" }}>
+                      <div style={{ fontSize: "24px" }}>{habit.icon}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <strong>{habit.name}</strong>
+                        <div style={{ marginTop: "4px", color: "#7f89a2", fontSize: "12px" }}>{reminder?.enabled ? `Every day at ${formatReminderTime(reminder.time)}` : "Reminder off"}{snoozed ? ` • Snoozed until ${formatRescheduleTime(rescheduledHabits[habit.id])}` : ""}</div>
+                      </div>
+                      <button type="button" className="icon-button" onClick={() => openReminderModal(habit)}>⚙</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </>
+        )}
+
       {showAddModal && (
         <div
           className="modal-overlay"
@@ -1772,6 +2236,32 @@ const badges = useMemo(() => {
                 <button type="submit" className="create-habit-btn">
                   {editingGoalId !== null ? "Save Changes" : "Create Goal"}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showReminderModal && selectedReminderHabit && (
+        <div className="modal-overlay" onClick={closeReminderModal}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><p className="eyebrow">SMART REMINDER</p><h2>{selectedReminderHabit.name}</h2></div>
+              <button type="button" className="modal-close" onClick={closeReminderModal}>×</button>
+            </div>
+            <form onSubmit={saveReminder}>
+              <div className="form-group">
+                <label>Reminder time</label>
+                <input type="time" value={reminderDraft.time} onChange={(event) => setReminderDraft({ ...reminderDraft, time: event.target.value })} required />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: "10px", margin: "16px 0", color: "#d8dded" }}>
+                <input type="checkbox" checked={reminderDraft.enabled} onChange={(event) => setReminderDraft({ ...reminderDraft, enabled: event.target.checked })} />
+                Enable daily reminder
+              </label>
+              <p style={{ color: "#8993ab", fontSize: "12px", lineHeight: 1.5, marginTop: "8px" }}>Browser notifications work while Habbit Tracker is open. Enable notifications from the Reminders page.</p>
+              <div className="modal-actions">
+                <button type="button" className="cancel-btn" onClick={closeReminderModal}>Cancel</button>
+                <button type="submit" className="create-habit-btn">Save Reminder</button>
               </div>
             </form>
           </div>
