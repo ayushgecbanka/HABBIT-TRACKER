@@ -1,5 +1,49 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import { auth } from "./firebase";
+
+const INTRO_THEME_PREVIEWS = [
+  { id: "neon", label: "Aurora", accent: "✦" },
+  { id: "premium", label: "Forest", accent: "❖" },
+  { id: "sunrise", label: "Sunrise", accent: "☀" },
+  { id: "light", label: "Frost", accent: "❄" },
+];
+
+const THEME_OPTIONS = [
+  {
+    id: "neon",
+    name: "Aurora",
+    icon: "✦",
+    description: "Futuristic, glowing and energetic",
+  },
+  {
+    id: "premium",
+    name: "Forest",
+    icon: "❖",
+    description: "Calm, natural and focused",
+  },
+  {
+    id: "sunrise",
+    name: "Sunrise",
+    icon: "☀",
+    description: "Warm, positive and motivating",
+  },
+  {
+    id: "light",
+    name: "Frost",
+    icon: "❄",
+    description: "Soft, frosted and calm",
+  },
+];
 
 const getDateKey = (date = new Date()) => {
   const year = date.getFullYear();
@@ -125,10 +169,22 @@ const initialHabits = [
   },
 ];
 
-function App() {
+const getGuestStorageId = () => {
+  const key = "habbit-guest-id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem(key, id);
+  }
+  return id;
+};
+
+function App({ authUser, guestMode, onLogout, theme, onThemeChange }) {
+  const storageScope = authUser?.uid || (guestMode ? getGuestStorageId() : "guest");
+  const storageKey = (key) => `habbit-${storageScope}-${key}`;
   const [habits, setHabits] = useState(() => {
     try {
-      const savedHabits = localStorage.getItem("habbit-habits");
+      const savedHabits = localStorage.getItem(storageKey("habits"));
       return savedHabits ? JSON.parse(savedHabits) : initialHabits;
     } catch {
       return initialHabits;
@@ -136,7 +192,37 @@ function App() {
   });
 
   const [activeNav, setActiveNav] = useState("Today");
-  const [darkMode, setDarkMode] = useState(true);
+  const darkMode = theme !== "light";
+
+
+  const [profile, setProfile] = useState(() => {
+    const fallbackName =
+      authUser?.displayName || authUser?.email?.split("@")[0] || "Guest";
+    const fallbackAvatar = fallbackName.trim().charAt(0).toUpperCase() || "G";
+    try {
+      const savedProfile = localStorage.getItem(storageKey("profile"));
+      return savedProfile
+        ? JSON.parse(savedProfile)
+        : { name: fallbackName, avatar: fallbackAvatar };
+    } catch {
+      return { name: fallbackName, avatar: fallbackAvatar };
+    }
+  });
+
+  useEffect(() => {
+    if (!authUser) return;
+    setProfile((current) => {
+      const fallbackName =
+        authUser.displayName || authUser.email?.split("@")[0] || "Guest";
+      const fallbackAvatar = fallbackName.trim().charAt(0).toUpperCase() || "G";
+      if (current?.name && current.name !== "Guest") return current;
+      return { name: fallbackName, avatar: current?.avatar && current.avatar !== "G" ? current.avatar : fallbackAvatar };
+    });
+  }, [authUser]);
+
+  useEffect(() => {
+    localStorage.setItem(storageKey("profile"), JSON.stringify(profile));
+  }, [profile]);
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -152,7 +238,7 @@ function App() {
 
   const [reminders, setReminders] = useState(() => {
     try {
-      const savedReminders = localStorage.getItem("habbit-reminders");
+      const savedReminders = localStorage.getItem(storageKey("reminders"));
       return savedReminders ? JSON.parse(savedReminders) : {};
     } catch {
       return {};
@@ -161,7 +247,7 @@ function App() {
 
   const [rescheduledHabits, setRescheduledHabits] = useState(() => {
     try {
-      const savedRescheduled = localStorage.getItem("habbit-rescheduled");
+      const savedRescheduled = localStorage.getItem(storageKey("rescheduled"));
       return savedRescheduled ? JSON.parse(savedRescheduled) : {};
     } catch {
       return {};
@@ -178,7 +264,7 @@ function App() {
 
   const [goals, setGoals] = useState(() => {
     try {
-      const savedGoals = localStorage.getItem("habbit-goals");
+      const savedGoals = localStorage.getItem(storageKey("goals"));
       return savedGoals ? JSON.parse(savedGoals) : [];
     } catch {
       return [];
@@ -197,19 +283,19 @@ function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem("habbit-habits", JSON.stringify(habits));
+    localStorage.setItem(storageKey("habits"), JSON.stringify(habits));
   }, [habits]);
 
   useEffect(() => {
-    localStorage.setItem("habbit-goals", JSON.stringify(goals));
+    localStorage.setItem(storageKey("goals"), JSON.stringify(goals));
   }, [goals]);
 
   useEffect(() => {
-    localStorage.setItem("habbit-reminders", JSON.stringify(reminders));
+    localStorage.setItem(storageKey("reminders"), JSON.stringify(reminders));
   }, [reminders]);
 
   useEffect(() => {
-    localStorage.setItem("habbit-rescheduled", JSON.stringify(rescheduledHabits));
+    localStorage.setItem(storageKey("rescheduled"), JSON.stringify(rescheduledHabits));
   }, [rescheduledHabits]);
 
   useEffect(() => {
@@ -795,8 +881,162 @@ const badges = useMemo(() => {
     };
   }, [habits, analyticsRange]);
 
+  const currentDisplayDate = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
+  const currentHour = new Date().getHours();
+  const greeting = currentHour < 12 ? "Good morning" : currentHour < 18 ? "Good afternoon" : "Good evening";
+  const profileName = (profile.name || "Guest").trim() || "Guest";
+  const profileInitial = (profile.avatar || profileName[0] || "G").slice(0, 2).toUpperCase();
+
+  const renderHabitCard = (habit) => (
+    <div
+      className={`habit-card ${isCompletedToday(habit) ? "completed" : ""}`}
+      key={habit.id}
+    >
+      <button
+        type="button"
+        className={`habit-check ${isCompletedToday(habit) ? "checked" : ""}`}
+        onClick={() => toggleHabit(habit.id)}
+        aria-label={isCompletedToday(habit) ? "Mark incomplete" : "Mark complete"}
+      >
+        {isCompletedToday(habit) ? "✓" : ""}
+      </button>
+
+      <div className="habit-icon">{habit.icon}</div>
+
+      <div className="habit-info">
+        <h3>{habit.name}</h3>
+        <div className="habit-meta">
+          <span>{habit.category}</span>
+          <span>•</span>
+          <span>{habit.time}</span>
+          <span>•</span>
+          <span>🔥 {calculateStreak(habit.history || [])} day streak</span>
+        </div>
+      </div>
+
+      <div className="habit-status">
+        {isCompletedToday(habit) ? (
+          <span className="done-label">Completed</span>
+        ) : rescheduledHabits[habit.id] && Number(rescheduledHabits[habit.id]) > Date.now() ? (
+          <span className="pending-label">Snoozed</span>
+        ) : isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow) ? (
+          <span className="pending-label">Missed</span>
+        ) : (
+          <span className="pending-label">Pending</span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className="icon-button"
+        onClick={() => openReminderModal(habit)}
+        title="Reminder settings"
+      >
+        🔔
+      </button>
+
+      <button
+        type="button"
+        className="delete-habit"
+        onClick={() => deleteHabit(habit.id)}
+        title="Delete habit"
+      >
+        ×
+      </button>
+    </div>
+  );
+
+  const renderHabitList = (limit = null) => {
+    const visibleHabits = limit ? habits.slice(0, limit) : habits;
+    if (!visibleHabits.length) {
+      return (
+        <div className="empty-state">
+          <div className="empty-icon">✨</div>
+          <h3>No habits yet</h3>
+          <p>Create your first habit to start your routine.</p>
+          <button type="button" className="add-habit-btn" onClick={() => setShowAddModal(true)}>
+            + Add Habit
+          </button>
+        </div>
+      );
+    }
+    return <section className="habits-list">{visibleHabits.map(renderHabitCard)}</section>;
+  };
+
   return (
-    <div className={darkMode ? "app dark" : "app light"}>
+    <div className={`${darkMode ? "app dark" : "app light"} theme-${theme}`}>
+      <style>{`
+        .theme-picker-grid { display:grid; gap:10px; }
+        .theme-choice.selected { border-color: rgba(139,92,246,.55); box-shadow: 0 0 0 1px rgba(139,92,246,.16) inset; }
+        .theme-neon { --theme-a: #8b5cf6; --theme-b: #22d3ee; }
+        .theme-neon .brand-logo, .theme-neon .profile-avatar, .theme-neon .top-avatar, .theme-neon .settings-avatar-preview { background: linear-gradient(135deg, #8b5cf6, #5b5de6) !important; }
+        .theme-neon .create-habit-btn, .theme-neon .add-habit-btn { background: linear-gradient(135deg, #7c4dff, #a879ff) !important; }
+        .theme-neon .nav-item.active { background: linear-gradient(135deg, rgba(124,77,255,.28), rgba(34,211,238,.08)) !important; }
+        .theme-premium { --theme-a: #60a5fa; --theme-b: #8b5cf6; }
+        .theme-premium .brand-logo, .theme-premium .profile-avatar, .theme-premium .top-avatar, .theme-premium .settings-avatar-preview { background: linear-gradient(135deg, #334155, #7c3aed) !important; }
+        .theme-premium .create-habit-btn, .theme-premium .add-habit-btn { background: linear-gradient(135deg, #4f46e5, #7c3aed) !important; }
+        .theme-premium .nav-item.active { background: rgba(124,58,237,.18) !important; }
+        .theme-premium .panel, .theme-premium .habit-card, .theme-premium .hero-card, .theme-premium .stat-card { box-shadow: 0 18px 48px rgba(2,6,23,.24); }
+        .theme-light { --theme-a: #7c3aed; --theme-b: #60a5fa; }
+        .theme-light .create-habit-btn, .theme-light .add-habit-btn { background: linear-gradient(135deg, #7c3aed, #6366f1) !important; color:#fff !important; }
+        .theme-light .nav-item.active { background: rgba(99,102,241,.10) !important; color:#4338ca !important; }
+        .theme-light .panel, .theme-light .habit-card, .theme-light .hero-card, .theme-light .stat-card { box-shadow: 0 16px 42px rgba(79,70,229,.08); }
+        .theme-cycle-button { transition: transform .2s ease, box-shadow .2s ease; }
+        .theme-cycle-button:hover { transform: rotate(12deg) scale(1.05); }
+        .page-section-header, .habits-page-head, .settings-page, .settings-grid, .habit-summary-row {
+          animation: pageIn .28s ease both;
+        }
+        .page-section-header { margin-top: 26px; }
+        .page-section-header .text-button { margin-top: 2px; }
+        .text-button {
+          border: 0; padding: 9px 12px; border-radius: 10px; cursor: pointer;
+          color: #bca9ff; background: rgba(139,92,246,.09); font-size: 11px; font-weight: 800;
+          transition: transform .2s ease, background .2s ease;
+        }
+        .text-button:hover { transform: translateY(-1px); background: rgba(139,92,246,.16); }
+        .habits-page-head, .settings-hero {
+          display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-top: 24px;
+        }
+        .habits-page-head h2, .settings-hero h2 { margin: 6px 0 5px; }
+        .page-subtext { color: #8993ab; font-size: 12px; line-height: 1.6; max-width: 700px; }
+        .habit-summary-row {
+          display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 18px 0 14px;
+        }
+        .mini-stat { padding: 14px 15px; border: 1px solid rgba(255,255,255,.065); border-radius: 15px; background: rgba(255,255,255,.025); }
+        .mini-stat span { display:block; color:#7f89a2; font-size:10px; margin-bottom:6px; text-transform:uppercase; letter-spacing:.5px; }
+        .mini-stat strong { font-size:20px; letter-spacing:-.5px; }
+        .settings-page { margin-top: 24px; }
+        .settings-hero { margin-top: 0; align-items: flex-start; display:block; }
+        .settings-grid { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:16px; margin-top:18px; }
+        .settings-card { padding:20px; }
+        .settings-avatar-preview { width:64px; height:64px; border-radius:20px; display:grid; place-items:center; margin-bottom:18px; font-weight:900; font-size:22px; color:#fff; background:linear-gradient(135deg,#8b5cf6,#5b5de6); box-shadow:0 14px 35px rgba(111,74,220,.25); }
+        .theme-choice {
+          width:100%; display:flex; align-items:center; gap:12px; padding:13px; margin-top:10px; text-align:left;
+          border:1px solid rgba(255,255,255,.06); border-radius:14px; background:rgba(255,255,255,.025); color:inherit; cursor:pointer;
+        }
+        .theme-choice > span { font-size:18px; width:24px; text-align:center; }
+        .theme-choice div { flex:1; min-width:0; }
+        .theme-choice strong { display:block; font-size:12px; }
+        .theme-choice small { display:block; margin-top:3px; color:#7f89a2; font-size:10px; }
+        .theme-choice b { color:#7ee2a8; font-size:13px; }
+        .light .text-button { color:#6947cf; background:rgba(121,88,237,.08); }
+        .light .mini-stat, .light .theme-choice { background:#f8f9fc; border-color:#e4e7ef; }
+        .light .page-subtext, .light .mini-stat span, .light .theme-choice small { color:#70798d; }
+        .sidebar .profile-card { border: 0; text-align:left; font: inherit; }
+        @keyframes pageIn { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:none } }
+        @media (max-width: 850px) {
+          .habit-summary-row, .settings-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+        }
+        @media (max-width: 620px) {
+          .habits-page-head { align-items:stretch; flex-direction:column; }
+          .habit-summary-row, .settings-grid { grid-template-columns: 1fr; }
+        }
+      `}</style>
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="brand">
@@ -824,6 +1064,7 @@ const badges = useMemo(() => {
               className={`nav-item ${
                 activeNav === name ? "active" : ""
               }`}
+              aria-current={activeNav === name ? "page" : undefined}
               onClick={() => setActiveNav(name)}
             >
               <span className="nav-icon">{icon}</span>
@@ -841,16 +1082,16 @@ const badges = useMemo(() => {
             <span>Settings</span>
           </button>
 
-          <div className="profile-card">
-            <div className="profile-avatar">A</div>
+          <button type="button" className="profile-card" onClick={() => setActiveNav("Settings")} title="Open profile settings">
+            <div className="profile-avatar">{profileInitial}</div>
 
             <div className="profile-info">
-              <strong>Ayush</strong>
+              <strong>{profileName}</strong>
               <span>Level {currentLevel}</span>
             </div>
 
             <span className="profile-arrow">›</span>
-          </div>
+          </button>
         </div>
       </aside>
 
@@ -859,277 +1100,143 @@ const badges = useMemo(() => {
         {/* TOPBAR */}
         <header className="topbar">
           <div>
-            <p className="date-text">Wednesday, September 11</p>
-            <h1>{activeNav === "Today" ? "Good evening, Ayush 👋" : activeNav}</h1>
+            <p className="date-text">{currentDisplayDate}</p>
+            <h1>{activeNav === "Today" ? `${greeting}, ${profileName} 👋` : activeNav}</h1>
           </div>
 
           <div className="top-actions">
             <button
-              className="icon-button"
-              onClick={() => setDarkMode(!darkMode)}
-              title="Toggle theme"
+              className="icon-button theme-cycle-button"
+              onClick={() => {
+                const index = THEME_OPTIONS.findIndex((item) => item.id === theme);
+                const next = THEME_OPTIONS[(index + 1) % THEME_OPTIONS.length];
+                onThemeChange(next.id);
+              }}
+              title="Cycle theme"
             >
-              {darkMode ? "☀" : "☾"}
+              {THEME_OPTIONS.find((item) => item.id === theme)?.icon || "✦"}
             </button>
 
-            <button className="notification-button">
+            <button type="button" className="notification-button" onClick={() => setActiveNav("Reminders")} title="Open reminders">
               ♢
               <span className="notification-dot"></span>
             </button>
 
-            <div className="top-avatar">A</div>
+            <div className="top-avatar">{profileInitial}</div>
           </div>
         </header>
 
-        {(activeNav === "Today" || activeNav === "Habits") && (
+        {activeNav === "Today" && (
           <>
-        {/* HERO */}
-        <section className="hero-grid">
-          <div className="hero-card">
-            <div className="hero-card-content">
-              <div>
-                <p className="eyebrow">YOUR DAILY PROGRESS</p>
-
-                <div className="progress-number">
-                  {progress}
-                  <span>%</span>
-                </div>
-
-                <p className="progress-message">
-                  {progress >= 75
-                    ? "Amazing! You're crushing it today."
-                    : progress >= 50
-                    ? "Great work! Keep the momentum going."
-                    : "Let's make today productive."}
-                </p>
-              </div>
-
-              <div className="progress-ring">
-                <div
-                  className="progress-ring-fill"
-                  style={{
-                    background: `conic-gradient(#8b5cf6 ${progress}%, rgba(255,255,255,0.08) ${progress}% 100%)`,
-                  }}
-                >
-                  <div className="progress-ring-inner">
-                    <strong>{completedCount}</strong>
-                    <span>/{habits.length}</span>
+            <section className="hero-grid">
+              <div className="hero-card">
+                <div className="hero-card-content">
+                  <div>
+                    <p className="eyebrow">YOUR DAILY PROGRESS</p>
+                    <div className="progress-number">{progress}<span>%</span></div>
+                    <p className="progress-message">
+                      {progress >= 75
+                        ? "Amazing! You're crushing it today."
+                        : progress >= 50
+                        ? "Great work! Keep the momentum going."
+                        : "Let's make today productive."}
+                    </p>
+                  </div>
+                  <div className="progress-ring">
+                    <div
+                      className="progress-ring-fill"
+                      style={{ background: `conic-gradient(#8b5cf6 ${progress}%, rgba(255,255,255,0.08) ${progress}% 100%)` }}
+                    >
+                      <div className="progress-ring-inner">
+                        <strong>{completedCount}</strong>
+                        <span>/{habits.length}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
 
-          <div className="score-card">
-            <div className="score-header">
-              <div>
-                <p className="eyebrow">TODAY'S SCORE</p>
-                <h2>{todayScore}</h2>
+              <div className="score-card">
+                <div className="score-header">
+                  <div>
+                    <p className="eyebrow">TODAY'S SCORE</p>
+                    <h2>{todayScore}</h2>
+                  </div>
+                  <div className="score-icon">⚡</div>
+                </div>
+                <div className="score-bar"><div className="score-bar-fill" style={{ width: `${todayScore}%` }}></div></div>
+                <div className="score-footer"><span>Keep going</span><strong>+{completedCount * 20} XP</strong></div>
               </div>
+            </section>
 
-              <div className="score-icon">⚡</div>
-            </div>
-
-            <div className="score-bar">
-              <div
-                className="score-bar-fill"
-                style={{ width: `${todayScore}%` }}
-              ></div>
-            </div>
-
-            <div className="score-footer">
-              <span>Keep going</span>
-              <strong>+{completedCount * 20} XP</strong>
-            </div>
-          </div>
-        </section>
-
-        {/* HABITS HEADER */}
-        <section className="section-header">
-          <div>
-            <p className="eyebrow">YOUR ROUTINE</p>
-            <h2>Today's Habits</h2>
-          </div>
-
-          <button
-            type="button"
-            className="add-habit-btn"
-            onClick={() => setShowAddModal(true)}
-          >
-            <span>+</span>
-            Add Habit
-          </button>
-        </section>
-
-        {/* HABITS */}
-        <section className="habits-list">
-          {habits.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">✨</div>
-              <h3>No habits yet</h3>
-              <p>Create your first habit to start your routine.</p>
-
-              <button
-                type="button"
-                className="add-habit-btn"
-                onClick={() => setShowAddModal(true)}
-              >
-                + Add Habit
+            <section className="section-header page-section-header">
+              <div>
+                <p className="eyebrow">TODAY'S FOCUS</p>
+                <h2>Stay on track</h2>
+              </div>
+              <button type="button" className="text-button" onClick={() => setActiveNav("Habits")}>
+                View all habits →
               </button>
-            </div>
-          ) : (
-            habits.map((habit) => (
-              <div
-                className={`habit-card ${
-                  isCompletedToday(habit) ? "completed" : ""
-                }`}
-                key={habit.id}
-              >
-                <button
-                  type="button"
-                  className={`habit-check ${
-                    isCompletedToday(habit) ? "checked" : ""
-                  }`}
-                  onClick={() => toggleHabit(habit.id)}
-                  aria-label={
-                    habit.completed
-                      ? "Mark incomplete"
-                      : "Mark complete"
-                  }
-                >
-                  {isCompletedToday(habit) ? "✓" : ""}
-                </button>
+            </section>
 
-                <div className="habit-icon">{habit.icon}</div>
+            {renderHabitList(3)}
 
-                <div className="habit-info">
-                  <h3>{habit.name}</h3>
-
-                  <div className="habit-meta">
-                    <span>{habit.category}</span>
-                    <span>•</span>
-                    <span>{habit.time}</span>
-                    <span>•</span>
-                    <span>🔥 {calculateStreak(habit.history || [])} day streak</span>
-                  </div>
+            <section className="bottom-grid">
+              <div className="panel">
+                <div className="panel-header">
+                  <div><p className="eyebrow">ACTIVITY</p><h2>This Week</h2></div>
+                  <span className="panel-value">+18%</span>
                 </div>
-
-                <div className="habit-status">
-                  {isCompletedToday(habit) ? (
-                    <span className="done-label">Completed</span>
-                  ) : rescheduledHabits[habit.id] && Number(rescheduledHabits[habit.id]) > Date.now() ? (
-                    <span className="pending-label">Snoozed</span>
-                  ) : isHabitOverdueToday(habit, reminders, rescheduledHabits, reminderNow) ? (
-                    <span className="pending-label">Missed</span>
-                  ) : (
-                    <span className="pending-label">Pending</span>
-                  )}
+                <div className="week-chart">
+                  {[['M',55],['T',72],['W',progress],['T',82],['F',45],['S',68],['S',38]].map(([day,value],index)=>(
+                    <div className="chart-column" key={index}>
+                      <div className="chart-track"><div className="chart-fill" style={{height:`${value}%`}}></div></div>
+                      <span>{day}</span>
+                    </div>
+                  ))}
                 </div>
-
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() => openReminderModal(habit)}
-                  title="Reminder settings"
-                >
-                  🔔
-                </button>
-
-                <button
-                  type="button"
-                  className="delete-habit"
-                  onClick={() => deleteHabit(habit.id)}
-                  title="Delete habit"
-                >
-                  ×
-                </button>
               </div>
-            ))
-          )}
-        </section>
 
+              <div className="panel streak-panel">
+                <div className="streak-icon">🔥</div>
+                <p className="eyebrow">CURRENT STREAK</p>
+                <div className="streak-number">{overallStreak} <span>days</span></div>
+                <p className="streak-text">{overallStreak > 0 ? "You're on fire! Keep your streak alive." : "Complete a habit today to start your streak."}</p>
+                <p className="streak-text">Best: {bestOverallStreak} days</p>
+                <div className="streak-progress"><div style={{width:`${Math.min(100,overallStreak*10)}%`}}></div></div>
+              </div>
+
+              <div className="panel xp-panel">
+                <div className="xp-top">
+                  <div><p className="eyebrow">EXPERIENCE</p><h2>{totalXp} XP</h2></div>
+                  <div className="xp-icon">✦</div>
+                </div>
+                <div className="xp-progress"><div style={{width:`${Math.min(100,totalXp%100)}%`}}></div></div>
+                <div className="xp-footer"><span>Level {currentLevel}</span><span>{Math.max(100,(Math.floor(totalXp/100)+1)*100)} XP</span></div>
+              </div>
+            </section>
           </>
         )}
 
-        {activeNav === "Today" && (
+        {activeNav === "Habits" && (
           <>
-        {/* BOTTOM GRID */}
-        <section className="bottom-grid">
-          <div className="panel">
-            <div className="panel-header">
+            <section className="habits-page-head">
               <div>
-                <p className="eyebrow">ACTIVITY</p>
-                <h2>This Week</h2>
+                <p className="eyebrow">ROUTINE LIBRARY</p>
+                <h2>Manage your habits</h2>
+                <p className="page-subtext">Create, complete, and maintain the routines that shape your day.</p>
               </div>
+              <button type="button" className="add-habit-btn" onClick={() => setShowAddModal(true)}><span>+</span>Add Habit</button>
+            </section>
 
-              <span className="panel-value">+18%</span>
+            <div className="habit-summary-row">
+              <div className="mini-stat"><span>Total</span><strong>{habits.length}</strong></div>
+              <div className="mini-stat"><span>Completed today</span><strong>{completedCount}</strong></div>
+              <div className="mini-stat"><span>Pending</span><strong>{Math.max(0, habits.length - completedCount)}</strong></div>
+              <div className="mini-stat"><span>Best streak</span><strong>{bestOverallStreak}d</strong></div>
             </div>
 
-            <div className="week-chart">
-              {[
-                ["M", 55],
-                ["T", 72],
-                ["W", progress],
-                ["T", 82],
-                ["F", 45],
-                ["S", 68],
-                ["S", 38],
-              ].map(([day, value], index) => (
-                <div className="chart-column" key={index}>
-                  <div className="chart-track">
-                    <div
-                      className="chart-fill"
-                      style={{ height: `${value}%` }}
-                    ></div>
-                  </div>
-
-                  <span>{day}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel streak-panel">
-            <div className="streak-icon">🔥</div>
-
-            <p className="eyebrow">CURRENT STREAK</p>
-
-            <div className="streak-number">
-              {overallStreak} <span>days</span>
-            </div>
-
-            <p className="streak-text">
-              {overallStreak > 0
-                ? "You're on fire! Keep your streak alive."
-                : "Complete a habit today to start your streak."}
-            </p>
-            <p className="streak-text">Best: {bestOverallStreak} days</p>
-
-            <div className="streak-progress">
-              <div style={{ width: `${Math.min(100, overallStreak * 10)}%` }}></div>
-            </div>
-          </div>
-
-          <div className="panel xp-panel">
-            <div className="xp-top">
-              <div>
-                <p className="eyebrow">EXPERIENCE</p>
-                <h2>{totalXp} XP</h2>
-              </div>
-
-              <div className="xp-icon">✦</div>
-            </div>
-
-            <div className="xp-progress">
-              <div style={{ width: `${Math.min(100, totalXp % 100)}%` }}></div>
-            </div>
-
-            <div className="xp-footer">
-              <span>Level {Math.max(1, Math.floor(totalXp / 100) + 1)}</span>
-              <span>{Math.max(100, (Math.floor(totalXp / 100) + 1) * 100)} XP</span>
-            </div>
-          </div>
-        </section>
+            {renderHabitList()}
           </>
         )}
 
@@ -1912,6 +2019,72 @@ const badges = useMemo(() => {
           </>
         )}
 
+
+        {activeNav === "Settings" && (
+          <section className="settings-page">
+            <div className="settings-hero">
+              <p className="eyebrow">PROFILE & PREFERENCES</p>
+              <h2>Make Habbit Tracker yours</h2>
+              <p className="page-subtext">Your local profile controls the name shown in the dashboard. This keeps the public demo from hardcoding someone else's identity.</p>
+            </div>
+
+            <div className="settings-grid">
+              <div className="panel settings-card">
+                <div className="settings-avatar-preview">{profileInitial}</div>
+                <div className="form-group">
+                  <label>Your Name</label>
+                  <input
+                    type="text"
+                    value={profile.name}
+                    maxLength={32}
+                    placeholder="Enter your name"
+                    onChange={(event) => setProfile({ ...profile, name: event.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Avatar letters / emoji</label>
+                  <input
+                    type="text"
+                    value={profile.avatar}
+                    maxLength={2}
+                    placeholder="G"
+                    onChange={(event) => setProfile({ ...profile, avatar: event.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="panel settings-card">
+                <p className="eyebrow">APPEARANCE</p>
+                <h3>Choose your vibe</h3>
+                <p className="page-subtext">Four visual themes. Same habits, goals and analytics.</p>
+                <div className="theme-picker-grid">
+                  {THEME_OPTIONS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={theme === item.id}
+                      className={`theme-choice ${theme === item.id ? "selected" : ""}`}
+                      onClick={() => onThemeChange(item.id)}
+                    >
+                      <span>{item.icon}</span>
+                      <div><strong>{item.name}</strong><small>{item.description}</small></div>
+                      {theme === item.id ? <b>✓</b> : null}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="theme-choice"
+                  onClick={onLogout}
+                  style={{ marginTop: "18px", borderColor: "rgba(244,114,182,.18)" }}
+                >
+                  <span>↪</span><div><strong>Sign out</strong><small>{guestMode ? "You are using Guest mode" : "Sign out of your account"}</small></div>
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
       </main>
 
       {/* ADD HABIT MODAL */}
@@ -2271,4 +2444,280 @@ const badges = useMemo(() => {
   );
 }
 
-export default App;
+function AuthScreen({ onGuest, theme, onThemeChange }) {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleGoogle = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (err) {
+      setError(getAuthErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmail = async (event) => {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      if (mode === "signup") {
+        const credential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        if (name.trim()) {
+          await updateProfile(credential.user, { displayName: name.trim() });
+        }
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+      }
+    } catch (err) {
+      setError(getAuthErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <style>{`
+        .auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 28px; position: relative; overflow: hidden; background: #090d19; color: #f3f5ff; }
+        .auth-screen.auth-theme-neon { background: radial-gradient(circle at 85% 12%, rgba(139,92,246,.25), transparent 34%), radial-gradient(circle at 12% 88%, rgba(34,211,238,.14), transparent 30%), #060914; }
+        .auth-screen.auth-theme-premium { background: radial-gradient(circle at 82% 18%, rgba(96,165,250,.10), transparent 30%), #070b14; }
+        .auth-screen.auth-theme-light { background: radial-gradient(circle at 10% 12%, rgba(129,140,248,.16), transparent 36%), linear-gradient(135deg,#eef2ff,#f8fafc); color:#182033; }
+        .auth-theme-picker { margin: 4px 0 20px; }
+        .auth-theme-picker > span { display:block; color:#7f89a2; font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; margin-bottom:8px; }
+        .auth-theme-picker > div { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
+        .auth-theme-picker button { min-height:42px; padding:8px 7px; border-radius:12px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03); color:inherit; cursor:pointer; font-size:10px; font-weight:800; transition:.2s ease; }
+        .auth-theme-picker button.active { border-color:rgba(139,92,246,.65); background:rgba(139,92,246,.13); box-shadow:0 0 0 1px rgba(139,92,246,.14) inset; }
+        .auth-theme-light .auth-card { background:rgba(255,255,255,.86); border-color:rgba(99,102,241,.14); box-shadow:0 28px 80px rgba(71,85,105,.18); color:#182033; }
+        .auth-theme-light .auth-subtext, .auth-theme-light .auth-note { color:#68738a; }
+        .auth-theme-light .auth-divider { color:#8993ab; }
+        .auth-theme-light .auth-divider::before, .auth-theme-light .auth-divider::after { background:rgba(15,23,42,.08); }
+        .auth-theme-light .auth-theme-picker button { background:#f8faff; border-color:#dfe5f2; color:#334155; }
+
+        .auth-card { width: min(460px, 100%); padding: 34px; border-radius: 28px; border: 1px solid rgba(255,255,255,.08); background: rgba(20,26,45,.88); backdrop-filter: blur(24px); box-shadow: 0 30px 80px rgba(0,0,0,.35); position: relative; z-index: 1; }
+        .auth-brand { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+        .auth-brand .brand-logo { width:46px; height:46px; border-radius:15px; }
+        .auth-screen h1 { margin:8px 0 8px; font-size:34px; letter-spacing:-1px; }
+        .auth-subtext, .auth-note { color:#9aa4bc; line-height:1.6; font-size:13px; }
+        .auth-form { display:grid; gap:12px; }
+        .google-auth-btn, .guest-btn, .auth-submit, .auth-switch { width:100%; min-height:46px; border-radius:14px; cursor:pointer; font-weight:800; }
+        .google-auth-btn { display:flex; align-items:center; justify-content:center; gap:10px; border:1px solid rgba(255,255,255,.08); background:#fff; color:#182033; }
+        .google-mark { width:24px; height:24px; display:grid; place-items:center; font-weight:900; color:#4285f4; border-radius:50%; background:#f4f7ff; }
+        .auth-divider { display:flex; align-items:center; gap:10px; margin:18px 0; color:#727c95; font-size:11px; text-transform:uppercase; letter-spacing:.8px; }
+        .auth-divider::before, .auth-divider::after { content:""; flex:1; height:1px; background:rgba(255,255,255,.08); }
+        .auth-submit { border:0; }
+        .auth-switch, .guest-btn { border:0; background:transparent; color:#bba8ff; }
+        .guest-btn { margin-top:6px; background:rgba(139,92,246,.08); border:1px solid rgba(139,92,246,.16); }
+        .auth-error { padding:11px 12px; border-radius:12px; font-size:12px; line-height:1.5; background:rgba(248,113,113,.08); border:1px solid rgba(248,113,113,.18); color:#ffb7b7; }
+        .auth-glow { position:absolute; border-radius:50%; filter:blur(70px); opacity:.26; }
+        .auth-glow-one { width:360px; height:360px; background:#7652e8; top:-120px; right:-120px; }
+        .auth-glow-two { width:300px; height:300px; background:#15b8a6; bottom:-130px; left:-100px; }
+        .auth-loading { min-height:100vh; display:grid; place-items:center; background:#090d19; color:#dfe5f8; font-weight:700; }
+      `}</style>
+      <div className={`auth-screen auth-theme-${theme}`}>
+        <div className="auth-glow auth-glow-one" />
+        <div className="auth-glow auth-glow-two" />
+        <div className="auth-card">
+          <div className="auth-brand">
+            <div className="brand-logo">H</div>
+            <div><div className="brand-name">Habbit</div><div className="brand-subtitle">TRACKER</div></div>
+          </div>
+          <div className="auth-theme-picker">
+            <span>Choose your vibe</span>
+            <div>
+              {THEME_OPTIONS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={theme === item.id ? "active" : ""}
+                  onClick={() => onThemeChange(item.id)}
+                  title={item.description}
+                >
+                  {item.icon} {item.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="eyebrow">YOUR PERSONAL ROUTINE OS</p>
+          <h1>{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
+          <p className="auth-subtext">Sync your habits across devices, or continue as a guest and start immediately.</p>
+
+          <button type="button" className="google-auth-btn" onClick={handleGoogle} disabled={loading}>
+            <span className="google-mark">G</span>
+            {loading ? "Please wait…" : "Continue with Google"}
+          </button>
+
+          <div className="auth-divider"><span>or continue with email</span></div>
+
+          <form onSubmit={handleEmail} className="auth-form">
+            {mode === "signup" && (
+              <div className="form-group">
+                <label>Name</label>
+                <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={40} required />
+              </div>
+            )}
+            <div className="form-group">
+              <label>Email</label>
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
+            </div>
+            <div className="form-group">
+              <label>Password</label>
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" minLength={6} required />
+            </div>
+            {error && <div className="auth-error">{error}</div>}
+            <button type="submit" className="create-habit-btn auth-submit" disabled={loading}>
+              {mode === "signup" ? "Create account" : "Sign in"}
+            </button>
+          </form>
+
+          <button type="button" className="auth-switch" onClick={() => { setError(""); setMode(mode === "login" ? "signup" : "login"); }}>
+            {mode === "login" ? "Need an account? Sign up" : "Already have an account? Sign in"}
+          </button>
+
+          <button type="button" className="guest-btn" onClick={onGuest} disabled={loading}>
+            Continue as Guest →
+          </button>
+          <p className="auth-note">Guest data stays on this browser. Account data is scoped to your Firebase account.</p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+const getAuthErrorMessage = (error) => {
+  const code = error?.code || "";
+  const messages = {
+    "auth/popup-closed-by-user": "Google sign-in was closed. Try again.",
+    "auth/popup-blocked": "Your browser blocked the Google sign-in popup. Allow popups and try again.",
+    "auth/invalid-credential": "Email or password is incorrect.",
+    "auth/invalid-email": "Please enter a valid email address.",
+    "auth/email-already-in-use": "An account with this email already exists. Try signing in.",
+    "auth/weak-password": "Password should be at least 6 characters.",
+    "auth/too-many-requests": "Too many attempts. Please wait a little and try again.",
+    "auth/operation-not-allowed": "This sign-in method is not enabled in Firebase yet.",
+  };
+  return messages[code] || error?.message || "Something went wrong. Please try again.";
+};
+
+
+function LaunchExperience({ onDone, theme, onThemeChange }) {
+  const [phase, setPhase] = useState("logo");
+
+  useEffect(() => {
+    const first = window.setTimeout(() => setPhase("message"), 650);
+    const second = window.setTimeout(() => setPhase("ready"), 1450);
+    const third = window.setTimeout(onDone, 2700);
+    return () => {
+      window.clearTimeout(first);
+      window.clearTimeout(second);
+      window.clearTimeout(third);
+    };
+  }, [onDone]);
+
+  return (
+    <div className={`launch-screen launch-theme-${theme}`} onClick={onDone}>
+      <div className="launch-orbit launch-orbit-one" />
+      <div className="launch-orbit launch-orbit-two" />
+      <div className="launch-grid-glow" />
+      <div className={`launch-content phase-${phase}`}>
+        <div className="launch-brand-mark">⚡</div>
+        <div className="launch-brand">Habbit <span>Tracker</span></div>
+        <div className="launch-kicker">BUILD · TRACK · GROW</div>
+        <h1>
+          Small Habits.
+          <br />
+          <span>Big Changes.</span>
+        </h1>
+        <p className="launch-tagline">Turn consistency into your better everyday.</p>
+        <div className="launch-progress">
+          <span />
+        </div>
+        <div className="launch-theme-row">
+          {INTRO_THEME_PREVIEWS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={theme === item.id ? "active" : ""}
+              onClick={(event) => {
+                event.stopPropagation();
+                onThemeChange(item.id);
+              }}
+            >
+              <b>{item.accent}</b>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <small>Tap anywhere to continue</small>
+      </div>
+    </div>
+  );
+}
+
+function AppWithAuth() {
+  const [authState, setAuthState] = useState({ loading: true, user: null });
+  const [guestMode, setGuestMode] = useState(() => localStorage.getItem("habbit-guest-mode") === "true");
+  const [theme, setTheme] = useState(() => localStorage.getItem("habbit-theme") || "neon");
+  const [showIntro, setShowIntro] = useState(() => sessionStorage.getItem("habbit-intro-seen") !== "true");
+
+  useEffect(() => {
+    localStorage.setItem("habbit-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthState({ loading: false, user });
+      if (user) {
+        localStorage.removeItem("habbit-guest-mode");
+        setGuestMode(false);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  const handleGuest = () => {
+    localStorage.setItem("habbit-guest-mode", "true");
+    setGuestMode(true);
+  };
+
+  const handleLogout = async () => {
+    if (authState.user) {
+      await signOut(auth);
+    }
+    localStorage.removeItem("habbit-guest-mode");
+    setGuestMode(false);
+  };
+
+  if (showIntro) {
+    return (
+      <LaunchExperience
+        theme={theme}
+        onThemeChange={setTheme}
+        onDone={() => {
+          sessionStorage.setItem("habbit-intro-seen", "true");
+          setShowIntro(false);
+        }}
+      />
+    );
+  }
+
+  if (authState.loading) {
+    return <div className="auth-loading">Loading Habbit Tracker…</div>;
+  }
+
+  if (!authState.user && !guestMode) {
+    return <AuthScreen onGuest={handleGuest} theme={theme} onThemeChange={setTheme} />;
+  }
+
+  return <App authUser={authState.user} guestMode={guestMode} onLogout={handleLogout} theme={theme} onThemeChange={setTheme} />;
+}
+
+export default AppWithAuth;
