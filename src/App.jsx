@@ -178,6 +178,13 @@ function App() {
     0
   );
 
+  const currentLevel = Math.max(1, Math.floor(totalXp / 100) + 1);
+  const currentLevelStartXp = (currentLevel - 1) * 100;
+  const nextLevelXp = currentLevel * 100;
+  const levelProgress = Math.min(100, Math.round(
+    ((totalXp - currentLevelStartXp) / 100) * 100
+  ));
+
   const bestOverallStreak = useMemo(() => {
     const completedDays = new Set();
 
@@ -187,6 +194,70 @@ function App() {
 
     return calculateBestStreak([...completedDays]);
   }, [habits]);
+
+const badges = useMemo(() => {
+    const totalCompletions = habits.reduce(
+      (total, habit) => total + (habit.history?.length || 0),
+      0
+    );
+    const habitCount = habits.length;
+    const completedGoals = goals.filter(
+      (goal) => Number(goal.progress) >= Number(goal.target)
+    ).length;
+
+    return [
+      {
+        id: "first-step",
+        icon: "🌱",
+        name: "First Step",
+        description: "Complete your first habit.",
+        requirement: "1 completion",
+        unlocked: totalCompletions >= 1,
+      },
+      {
+        id: "week-warrior",
+        icon: "🔥",
+        name: "Week Warrior",
+        description: "Build a 7-day streak.",
+        requirement: "7-day streak",
+        unlocked: bestOverallStreak >= 7,
+      },
+      {
+        id: "consistency",
+        icon: "⚡",
+        name: "Consistency",
+        description: "Reach 30 habit completions.",
+        requirement: "30 completions",
+        unlocked: totalCompletions >= 30,
+      },
+      {
+        id: "habit-builder",
+        icon: "🏗️",
+        name: "Habit Builder",
+        description: "Create 5 habits.",
+        requirement: "5 habits",
+        unlocked: habitCount >= 5,
+      },
+      {
+        id: "goal-setter",
+        icon: "🎯",
+        name: "Goal Setter",
+        description: "Create your first goal.",
+        requirement: "1 goal",
+        unlocked: goals.length >= 1,
+      },
+      {
+        id: "goal-crusher",
+        icon: "🏆",
+        name: "Goal Crusher",
+        description: "Complete a goal.",
+        requirement: "1 completed goal",
+        unlocked: completedGoals >= 1,
+      },
+    ];
+  }, [habits, goals, bestOverallStreak]);
+
+  const unlockedBadges = badges.filter((badge) => badge.unlocked).length;
 
   const calendarInfo = useMemo(() => {
     const year = calendarDate.getFullYear();
@@ -395,6 +466,7 @@ function App() {
             ["Analytics", "◒"],
             ["Calendar", "▦"],
             ["Goals", "◎"],
+            ["Rewards", "✦"],
           ].map(([name, icon]) => (
             <button
               key={name}
@@ -423,7 +495,7 @@ function App() {
 
             <div className="profile-info">
               <strong>Ayush</strong>
-              <span>Level 12</span>
+              <span>Level {currentLevel}</span>
             </div>
 
             <span className="profile-arrow">›</span>
@@ -516,7 +588,7 @@ function App() {
 
             <div className="score-footer">
               <span>Keep going</span>
-              <strong>+20 XP</strong>
+              <strong>+{completedCount * 20} XP</strong>
             </div>
           </div>
         </section>
@@ -1001,6 +1073,169 @@ function App() {
             </div>
           )}
         </section>
+          </>
+        )}
+
+        {activeNav === "Rewards" && (
+          <>
+            <section className="hero-grid" style={{ marginTop: "22px" }}>
+              <div className="hero-card">
+                <div className="hero-card-content">
+                  <div>
+                    <p className="eyebrow">CURRENT LEVEL</p>
+                    <div className="progress-number">
+                      {currentLevel}
+                    </div>
+                    <p className="progress-message">
+                      {nextLevelXp - totalXp} XP until Level {currentLevel + 1}.
+                    </p>
+                  </div>
+
+                  <div className="progress-ring">
+                    <div
+                      className="progress-ring-fill"
+                      style={{
+                        background: `conic-gradient(#8b5cf6 ${levelProgress}%, rgba(255,255,255,0.08) ${levelProgress}% 100%)`,
+                      }}
+                    >
+                      <div className="progress-ring-inner">
+                        <strong>{levelProgress}</strong>
+                        <span>%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="score-card">
+                <div className="score-header">
+                  <div>
+                    <p className="eyebrow">TOTAL EXPERIENCE</p>
+                    <h2>{totalXp} XP</h2>
+                  </div>
+                  <div className="score-icon">✦</div>
+                </div>
+
+                <div className="score-bar">
+                  <div
+                    className="score-bar-fill"
+                    style={{ width: `${levelProgress}%` }}
+                  ></div>
+                </div>
+
+                <div className="score-footer">
+                  <span>Level {currentLevel}</span>
+                  <strong>{nextLevelXp} XP</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="section-header" style={{ marginTop: "24px" }}>
+              <div>
+                <p className="eyebrow">ACHIEVEMENTS</p>
+                <h2>Badges</h2>
+              </div>
+              <div className="panel-value">{unlockedBadges}/{badges.length} unlocked</div>
+            </section>
+
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "14px",
+              }}
+            >
+              {badges.map((badge) => (
+                <div
+                  key={badge.id}
+                  className="panel"
+                  style={{
+                    padding: "18px",
+                    opacity: badge.unlocked ? 1 : 0.58,
+                    border: badge.unlocked
+                      ? "1px solid rgba(139,92,246,.35)"
+                      : "1px solid rgba(255,255,255,.06)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div
+                      style={{
+                        width: "48px",
+                        height: "48px",
+                        display: "grid",
+                        placeItems: "center",
+                        borderRadius: "14px",
+                        background: badge.unlocked
+                          ? "rgba(139,92,246,.14)"
+                          : "rgba(255,255,255,.05)",
+                        fontSize: "24px",
+                      }}
+                    >
+                      {badge.unlocked ? badge.icon : "🔒"}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <strong style={{ display: "block", fontSize: "15px" }}>
+                        {badge.name}
+                      </strong>
+                      <span style={{ color: "#7f89a2", fontSize: "11px" }}>
+                        {badge.requirement}
+                      </span>
+                    </div>
+                  </div>
+                  <p style={{ color: "#9aa4ba", fontSize: "12px", lineHeight: 1.55, margin: "13px 0 0" }}>
+                    {badge.description}
+                  </p>
+                  <div
+                    style={{
+                      marginTop: "14px",
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      color: badge.unlocked ? "#7ee2a8" : "#7f89a2",
+                    }}
+                  >
+                    {badge.unlocked ? "UNLOCKED" : "LOCKED"}
+                  </div>
+                </div>
+              ))}
+            </section>
+
+            <section className="panel" style={{ marginTop: "18px", padding: "18px" }}>
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">HOW XP WORKS</p>
+                  <h2>Earn XP by staying consistent</h2>
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: "10px",
+                }}
+              >
+                {[
+                  ["✓", "Complete a habit", "+20 XP"],
+                  ["🔥", "Protect your streak", "Unlock badges"],
+                  ["🎯", "Set goals", "Track milestones"],
+                ].map(([icon, title, reward]) => (
+                  <div
+                    key={title}
+                    style={{
+                      padding: "14px",
+                      borderRadius: "14px",
+                      background: "rgba(255,255,255,.025)",
+                      border: "1px solid rgba(255,255,255,.06)",
+                    }}
+                  >
+                    <div style={{ fontSize: "20px" }}>{icon}</div>
+                    <strong style={{ display: "block", marginTop: "7px", fontSize: "13px" }}>
+                      {title}
+                    </strong>
+                    <span style={{ color: "#8993ab", fontSize: "11px" }}>{reward}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
           </>
         )}
 
