@@ -2,296 +2,549 @@ import { useMemo, useState } from "react";
 import "./App.css";
 
 const initialHabits = [
-  { id: 1, title: "Morning Workout", category: "Fitness", time: "06:30 AM", icon: "💪", completed: true },
-  { id: 2, title: "Deep Work Session", category: "Work", time: "09:00 AM", icon: "💻", completed: true },
-  { id: 3, title: "Read 20 Pages", category: "Learning", time: "08:00 PM", icon: "📚", completed: false },
-  { id: 4, title: "Drink 2L Water", category: "Health", time: "All day", icon: "💧", completed: false },
-];
-
-const week = [
-  { day: "M", date: "8", score: 82 },
-  { day: "T", date: "9", score: 91 },
-  { day: "W", date: "10", score: 74 },
-  { day: "T", date: "11", score: 68 },
-  { day: "F", date: "12", score: 88 },
-  { day: "S", date: "13", score: 94 },
-  { day: "S", date: "14", score: 76 },
+  {
+    id: 1,
+    name: "Morning Workout",
+    category: "Fitness",
+    time: "06:30 AM",
+    icon: "💪",
+    completed: true,
+  },
+  {
+    id: 2,
+    name: "Deep Work Session",
+    category: "Work",
+    time: "09:00 AM",
+    icon: "💻",
+    completed: true,
+  },
+  {
+    id: 3,
+    name: "Read 20 Pages",
+    category: "Learning",
+    time: "08:00 PM",
+    icon: "📚",
+    completed: false,
+  },
+  {
+    id: 4,
+    name: "Drink 2L Water",
+    category: "Health",
+    time: "All day",
+    icon: "💧",
+    completed: false,
+  },
 ];
 
 function App() {
   const [habits, setHabits] = useState(initialHabits);
-  const [activeNav, setActiveNav] = useState("Dashboard");
+  const [activeNav, setActiveNav] = useState("Today");
   const [darkMode, setDarkMode] = useState(true);
 
-  const completed = habits.filter((habit) => habit.completed).length;
+  const [showAddModal, setShowAddModal] = useState(false);
 
-  const progress = useMemo(
-    () => Math.round((completed / habits.length) * 100),
-    [completed, habits.length]
+  const [newHabit, setNewHabit] = useState({
+    name: "",
+    category: "Personal",
+    time: "",
+    icon: "✨",
+  });
+
+  const completedCount = useMemo(
+    () => habits.filter((habit) => habit.completed).length,
+    [habits]
   );
 
+  const progress =
+    habits.length === 0
+      ? 0
+      : Math.round((completedCount / habits.length) * 100);
+
+  const todayScore = Math.min(100, progress + 10);
+
   const toggleHabit = (id) => {
-    setHabits((current) =>
-      current.map((habit) =>
-        habit.id === id ? { ...habit, completed: !habit.completed } : habit
+    setHabits((currentHabits) =>
+      currentHabits.map((habit) =>
+        habit.id === id
+          ? { ...habit, completed: !habit.completed }
+          : habit
       )
     );
   };
 
+  const deleteHabit = (id) => {
+    setHabits((currentHabits) =>
+      currentHabits.filter((habit) => habit.id !== id)
+    );
+  };
+
+  const handleAddHabit = (event) => {
+    event.preventDefault();
+
+    if (!newHabit.name.trim()) {
+      return;
+    }
+
+    const habit = {
+      id: Date.now(),
+      name: newHabit.name.trim(),
+      category: newHabit.category,
+      time: newHabit.time || "All day",
+      icon: newHabit.icon || "✨",
+      completed: false,
+    };
+
+    setHabits((currentHabits) => [...currentHabits, habit]);
+
+    setNewHabit({
+      name: "",
+      category: "Personal",
+      time: "",
+      icon: "✨",
+    });
+
+    setShowAddModal(false);
+  };
+
+  const closeModal = () => {
+    setShowAddModal(false);
+
+    setNewHabit({
+      name: "",
+      category: "Personal",
+      time: "",
+      icon: "✨",
+    });
+  };
+
   return (
-    <div className={`app ${darkMode ? "dark" : "light"}`}>
+    <div className={darkMode ? "app dark" : "app light"}>
+      {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">H</div>
+          <div className="brand-logo">H</div>
+
           <div>
-            <h1>Habbit</h1>
-            <span>TRACK YOUR LIFE</span>
+            <div className="brand-name">Habbit</div>
+            <div className="brand-subtitle">TRACKER</div>
           </div>
         </div>
 
-        <div className="profile-mini">
-          <div className="avatar">A</div>
-          <div>
-            <strong>Ayush</strong>
-            <span>Level 12 · Consistent</span>
-          </div>
-          <button className="more-btn">•••</button>
-        </div>
-
-        <nav>
-          <p className="nav-label">WORKSPACE</p>
-
+        <nav className="sidebar-nav">
           {[
-            ["Dashboard", "⌂"],
-            ["My Habits", "✓"],
+            ["Today", "⌂"],
+            ["Habits", "✓"],
             ["Analytics", "◒"],
             ["Calendar", "▦"],
-          ].map(([name, icon]) => (
-            <button
-              key={name}
-              className={`nav-item ${activeNav === name ? "active" : ""}`}
-              onClick={() => setActiveNav(name)}
-            >
-              <span>{icon}</span>
-              {name}
-            </button>
-          ))}
-
-          <p className="nav-label second">PERSONAL</p>
-
-          {[
             ["Goals", "◎"],
-            ["Achievements", "♢"],
-            ["Settings", "⚙"],
           ].map(([name, icon]) => (
             <button
               key={name}
-              className={`nav-item ${activeNav === name ? "active" : ""}`}
+              className={`nav-item ${
+                activeNav === name ? "active" : ""
+              }`}
               onClick={() => setActiveNav(name)}
             >
-              <span>{icon}</span>
-              {name}
+              <span className="nav-icon">{icon}</span>
+              <span>{name}</span>
             </button>
           ))}
         </nav>
 
         <div className="sidebar-bottom">
-          <div className="upgrade-card">
-            <div className="upgrade-icon">✦</div>
-            <strong>Build your best self.</strong>
-            <p>Stay consistent. Small actions create big results.</p>
-            <button>Explore Pro →</button>
-          </div>
+          <button
+            className="nav-item"
+            onClick={() => setActiveNav("Settings")}
+          >
+            <span className="nav-icon">⚙</span>
+            <span>Settings</span>
+          </button>
 
-          <div className="sidebar-footer">
-            <span>© 2026 Habbit</span>
-            <span>v1.0</span>
+          <div className="profile-card">
+            <div className="profile-avatar">A</div>
+
+            <div className="profile-info">
+              <strong>Ayush</strong>
+              <span>Level 12</span>
+            </div>
+
+            <span className="profile-arrow">›</span>
           </div>
         </div>
       </aside>
 
-      <main className="main">
+      {/* MAIN */}
+      <main className="main-content">
+        {/* TOPBAR */}
         <header className="topbar">
           <div>
-            <span className="eyebrow">THURSDAY, SEPTEMBER 11</span>
-            <h2>Good evening, Ayush <span>👋</span></h2>
-            <p>Let's keep the momentum going.</p>
+            <p className="date-text">Wednesday, September 11</p>
+            <h1>Good evening, Ayush 👋</h1>
           </div>
 
           <div className="top-actions">
-            <button className="icon-btn" onClick={() => setDarkMode(!darkMode)}>
+            <button
+              className="icon-button"
+              onClick={() => setDarkMode(!darkMode)}
+              title="Toggle theme"
+            >
               {darkMode ? "☀" : "☾"}
             </button>
-            <button className="notification">♢<i /></button>
-            <button className="profile-btn">
-              <span className="avatar small">A</span>
-              <span>Ayush</span>
-              <b>⌄</b>
+
+            <button className="notification-button">
+              ♢
+              <span className="notification-dot"></span>
             </button>
+
+            <div className="top-avatar">A</div>
           </div>
         </header>
 
+        {/* HERO */}
         <section className="hero-grid">
           <div className="hero-card">
-            <div className="hero-copy">
-              <span className="card-label">TODAY'S ROUTINE</span>
-              <h3>Make today count.</h3>
-              <p>
-                You're doing great. Complete your remaining habits to finish
-                the day strong.
-              </p>
+            <div className="hero-card-content">
+              <div>
+                <p className="eyebrow">YOUR DAILY PROGRESS</p>
 
-              <div className="hero-stats">
-                <div>
-                  <strong>{completed}/{habits.length}</strong>
-                  <span>Completed</span>
+                <div className="progress-number">
+                  {progress}
+                  <span>%</span>
                 </div>
-                <div>
-                  <strong>{progress}%</strong>
-                  <span>Progress</span>
-                </div>
-                <div>
-                  <strong>🔥 14</strong>
-                  <span>Day streak</span>
-                </div>
+
+                <p className="progress-message">
+                  {progress >= 75
+                    ? "Amazing! You're crushing it today."
+                    : progress >= 50
+                    ? "Great work! Keep the momentum going."
+                    : "Let's make today productive."}
+                </p>
               </div>
-            </div>
 
-            <div className="progress-ring" style={{ "--progress": `${progress * 3.6}deg` }}>
-              <div className="ring-inner">
-                <strong>{progress}%</strong>
-                <span>DONE</span>
+              <div className="progress-ring">
+                <div
+                  className="progress-ring-fill"
+                  style={{
+                    background: `conic-gradient(#8b5cf6 ${progress}%, rgba(255,255,255,0.08) ${progress}% 100%)`,
+                  }}
+                >
+                  <div className="progress-ring-inner">
+                    <strong>{completedCount}</strong>
+                    <span>/{habits.length}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           <div className="score-card">
             <div className="score-header">
-              <span className="card-label">ROUTINE HEALTH</span>
-              <span className="trend">↗ +8%</span>
-            </div>
+              <div>
+                <p className="eyebrow">TODAY'S SCORE</p>
+                <h2>{todayScore}</h2>
+              </div>
 
-            <div className="score-number">
-              <strong>87</strong>
-              <span>/100</span>
+              <div className="score-icon">⚡</div>
             </div>
 
             <div className="score-bar">
-              <span style={{ width: "87%" }} />
+              <div
+                className="score-bar-fill"
+                style={{ width: `${todayScore}%` }}
+              ></div>
             </div>
 
-            <p>Excellent consistency this week.</p>
-
             <div className="score-footer">
-              <span>Consistency</span>
-              <strong>92%</strong>
-              <span>Timing</span>
-              <strong>84%</strong>
+              <span>Keep going</span>
+              <strong>+20 XP</strong>
             </div>
           </div>
         </section>
 
-        <section className="content-grid">
-          <div className="habits-section">
-            <div className="section-heading">
-              <div>
-                <span className="card-label">YOUR DAY</span>
-                <h3>Today's Habits</h3>
-              </div>
-              <button className="add-btn">+ Add Habit</button>
-            </div>
-
-            <div className="habit-list">
-              {habits.map((habit) => (
-                <div className={`habit-card ${habit.completed ? "done" : ""}`} key={habit.id}>
-                  <button
-                    className="check"
-                    onClick={() => toggleHabit(habit.id)}
-                    aria-label={`Toggle ${habit.title}`}
-                  >
-                    {habit.completed ? "✓" : ""}
-                  </button>
-
-                  <div className="habit-icon">{habit.icon}</div>
-
-                  <div className="habit-info">
-                    <strong>{habit.title}</strong>
-                    <span>{habit.category} · {habit.time}</span>
-                  </div>
-
-                  <div className="habit-right">
-                    <span className={`status ${habit.completed ? "complete" : ""}`}>
-                      {habit.completed ? "Completed" : "Pending"}
-                    </span>
-                    <button className="dots">•••</button>
-                  </div>
-                </div>
-              ))}
-            </div>
+        {/* HABITS HEADER */}
+        <section className="section-header">
+          <div>
+            <p className="eyebrow">YOUR ROUTINE</p>
+            <h2>Today's Habits</h2>
           </div>
 
-          <div className="week-section">
-            <div className="section-heading">
-              <div>
-                <span className="card-label">CONSISTENCY</span>
-                <h3>This Week</h3>
+          <button
+            type="button"
+            className="add-habit-btn"
+            onClick={() => setShowAddModal(true)}
+          >
+            <span>+</span>
+            Add Habit
+          </button>
+        </section>
+
+        {/* HABITS */}
+        <section className="habits-list">
+          {habits.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">✨</div>
+              <h3>No habits yet</h3>
+              <p>Create your first habit to start your routine.</p>
+
+              <button
+                type="button"
+                className="add-habit-btn"
+                onClick={() => setShowAddModal(true)}
+              >
+                + Add Habit
+              </button>
+            </div>
+          ) : (
+            habits.map((habit) => (
+              <div
+                className={`habit-card ${
+                  habit.completed ? "completed" : ""
+                }`}
+                key={habit.id}
+              >
+                <button
+                  type="button"
+                  className={`habit-check ${
+                    habit.completed ? "checked" : ""
+                  }`}
+                  onClick={() => toggleHabit(habit.id)}
+                  aria-label={
+                    habit.completed
+                      ? "Mark incomplete"
+                      : "Mark complete"
+                  }
+                >
+                  {habit.completed ? "✓" : ""}
+                </button>
+
+                <div className="habit-icon">{habit.icon}</div>
+
+                <div className="habit-info">
+                  <h3>{habit.name}</h3>
+
+                  <div className="habit-meta">
+                    <span>{habit.category}</span>
+                    <span>•</span>
+                    <span>{habit.time}</span>
+                  </div>
+                </div>
+
+                <div className="habit-status">
+                  {habit.completed ? (
+                    <span className="done-label">Completed</span>
+                  ) : (
+                    <span className="pending-label">Pending</span>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="delete-habit"
+                  onClick={() => deleteHabit(habit.id)}
+                  title="Delete habit"
+                >
+                  ×
+                </button>
               </div>
-              <button className="text-btn">View analytics →</button>
+            ))
+          )}
+        </section>
+
+        {/* BOTTOM GRID */}
+        <section className="bottom-grid">
+          <div className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">ACTIVITY</p>
+                <h2>This Week</h2>
+              </div>
+
+              <span className="panel-value">+18%</span>
             </div>
 
             <div className="week-chart">
-              {week.map((item, index) => (
-                <div className="day-column" key={`${item.day}-${index}`}>
-                  <div className="bar-wrap">
+              {[
+                ["M", 55],
+                ["T", 72],
+                ["W", progress],
+                ["T", 82],
+                ["F", 45],
+                ["S", 68],
+                ["S", 38],
+              ].map(([day, value], index) => (
+                <div className="chart-column" key={index}>
+                  <div className="chart-track">
                     <div
-                      className={`bar ${item.date === "11" ? "today" : ""}`}
-                      style={{ height: `${item.score}%` }}
-                    >
-                      <span>{item.score}</span>
-                    </div>
+                      className="chart-fill"
+                      style={{ height: `${value}%` }}
+                    ></div>
                   </div>
-                  <strong>{item.day}</strong>
-                  <span>{item.date}</span>
+
+                  <span>{day}</span>
                 </div>
               ))}
             </div>
-
-            <div className="chart-summary">
-              <span><i className="dot" /> Completion rate</span>
-              <strong>82.4%</strong>
-            </div>
           </div>
-        </section>
 
-        <section className="bottom-grid">
-          <div className="streak-card">
+          <div className="panel streak-panel">
             <div className="streak-icon">🔥</div>
-            <div>
-              <span className="card-label">CURRENT STREAK</span>
-              <h3>14 Days</h3>
-              <p>You're on fire! Keep it going.</p>
+
+            <p className="eyebrow">CURRENT STREAK</p>
+
+            <div className="streak-number">
+              12 <span>days</span>
             </div>
-            <div className="best-streak">
-              <span>BEST</span>
-              <strong>27 days</strong>
+
+            <p className="streak-text">
+              You're on fire! Keep your streak alive.
+            </p>
+
+            <div className="streak-progress">
+              <div style={{ width: "72%" }}></div>
             </div>
           </div>
 
-          <div className="xp-card">
+          <div className="panel xp-panel">
             <div className="xp-top">
-              <span className="card-label">LEVEL PROGRESS</span>
-              <strong>2,840 / 3,500 XP</strong>
+              <div>
+                <p className="eyebrow">EXPERIENCE</p>
+                <h2>2,480 XP</h2>
+              </div>
+
+              <div className="xp-icon">✦</div>
             </div>
-            <div className="xp-bar">
-              <span style={{ width: "81%" }} />
+
+            <div className="xp-progress">
+              <div style={{ width: "68%" }}></div>
             </div>
-            <div className="xp-bottom">
+
+            <div className="xp-footer">
               <span>Level 12</span>
-              <span>660 XP to Level 13</span>
+              <span>3,650 XP</span>
             </div>
           </div>
         </section>
       </main>
+
+      {/* ADD HABIT MODAL */}
+      {showAddModal && (
+        <div
+          className="modal-overlay"
+          onClick={closeModal}
+        >
+          <div
+            className="modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">NEW ROUTINE</p>
+                <h2>Add New Habit</h2>
+                <p>Create a habit for your daily routine.</p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeModal}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleAddHabit}>
+              <div className="form-group">
+                <label>Habit Name</label>
+
+                <input
+                  type="text"
+                  placeholder="e.g. Read 20 pages"
+                  value={newHabit.name}
+                  onChange={(event) =>
+                    setNewHabit({
+                      ...newHabit,
+                      name: event.target.value,
+                    })
+                  }
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Category</label>
+
+                  <select
+                    value={newHabit.category}
+                    onChange={(event) =>
+                      setNewHabit({
+                        ...newHabit,
+                        category: event.target.value,
+                      })
+                    }
+                  >
+                    <option>Personal</option>
+                    <option>Fitness</option>
+                    <option>Work</option>
+                    <option>Learning</option>
+                    <option>Health</option>
+                    <option>Finance</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Time</label>
+
+                  <input
+                    type="time"
+                    value={newHabit.time}
+                    onChange={(event) =>
+                      setNewHabit({
+                        ...newHabit,
+                        time: event.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Icon</label>
+
+                <input
+                  type="text"
+                  maxLength="2"
+                  value={newHabit.icon}
+                  onChange={(event) =>
+                    setNewHabit({
+                      ...newHabit,
+                      icon: event.target.value,
+                    })
+                  }
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="cancel-btn"
+                  onClick={closeModal}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="create-habit-btn"
+                >
+                  Create Habit
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
