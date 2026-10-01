@@ -237,6 +237,509 @@ function App({ authUser, guestMode, onLogout, theme, onThemeChange }) {
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [analyticsRange, setAnalyticsRange] = useState(7);
 
+  // WINTER ARC — continuous calendar-month transformation mode
+  const winterStorageKey = storageKey("winter-arc");
+  const winterSchemaKey = storageKey("winter-arc-schema");
+  const [winterArc, setWinterArc] = useState(() => {
+    try {
+      const saved = localStorage.getItem(winterStorageKey);
+      const parsed = saved ? JSON.parse(saved) : { months: {} };
+      return { schemaVersion: 2, months: parsed?.months || {} };
+    } catch {
+      return { schemaVersion: 2, months: {} };
+    }
+  });
+  const [winterMonthDate, setWinterMonthDate] = useState(() => new Date());
+  const [winterSelectedDay, setWinterSelectedDay] = useState(() => getDateKey());
+  const [winterSleep, setWinterSleep] = useState(8);
+  const [winterReflection, setWinterReflection] = useState({ win: "", lesson: "", improve: "", goal: "" });
+  const [winterReflectionSaved, setWinterReflectionSaved] = useState(false);
+  const [winterCarryoverPrompt, setWinterCarryoverPrompt] = useState(null);
+  const [winterView, setWinterView] = useState("overview");
+  const [winterDayCelebration, setWinterDayCelebration] = useState(null);
+  const [winterAchievementToast, setWinterAchievementToast] = useState(null);
+  const [winterSelectedMission, setWinterSelectedMission] = useState(null);
+  const [winterMissionToast, setWinterMissionToast] = useState(null);
+  const [winterArcLifecycle, setWinterArcLifecycle] = useState({ synced: false, rollover: false });
+
+  const getWinterMonthKey = (date = new Date()) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+  const getWinterMonthLabel = (date = new Date()) =>
+    date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  const winterMonthKey = getWinterMonthKey(winterMonthDate);
+  const winterMonthLabel = getWinterMonthLabel(winterMonthDate);
+  const winterTodayKey = getDateKey();
+  const winterMonthData = winterArc.months?.[winterMonthKey] || { days: {}, sleep: {}, checkins: {}, reflection: {} };
+  const winterMissions = [
+    { id: "wake", icon: "◷", title: "Wake Up On Time", text: "Start the day without snoozing.", time: "06:30 AM", priority: "HIGH", xp: 30 },
+    { id: "move", icon: "⌁", title: "Move Your Body", text: "Workout, walk, stretch or train.", time: "07:30 AM", priority: "HIGH", xp: 35 },
+    { id: "focus", icon: "◈", title: "Deep Focus", text: "Complete one distraction-free focus block.", time: "09:00 AM", priority: "HIGH", xp: 40 },
+    { id: "learn", icon: "✦", title: "Learn Something", text: "Read, study, build or practice.", time: "06:00 PM", priority: "MED", xp: 30 },
+    { id: "hydrate", icon: "◇", title: "Hydrate", text: "Stay on top of your water intake.", time: "ALL DAY", priority: "MED", xp: 20 },
+    { id: "shutdown", icon: "☾", title: "Night Shutdown", text: "Close the day intentionally.", time: "10:30 PM", priority: "HIGH", xp: 35 },
+  ];
+
+  useEffect(() => {
+    localStorage.setItem(winterStorageKey, JSON.stringify({ ...winterArc, schemaVersion: 2 }));
+    localStorage.setItem(winterSchemaKey, "2");
+  }, [winterArc, winterStorageKey, winterSchemaKey]);
+
+  // ARC LIFECYCLE ENGINE: keep the active month/day aligned with the real calendar.
+  // Historical month objects are never replaced, so Oct → Nov → Dec → Feb remains intact.
+  useEffect(() => {
+    const now = new Date();
+    const nowMonthKey = getWinterMonthKey(now);
+    const lastSeen = localStorage.getItem(storageKey("winter-last-seen-date"));
+    const todayKey = getDateKey(now);
+    const winterStart = new Date(2026, 9, 1);
+    winterStart.setHours(0, 0, 0, 0);
+
+    if (now >= winterStart) {
+      setWinterMonthDate((current) => {
+        const currentKey = getWinterMonthKey(current);
+        return currentKey === nowMonthKey ? current : new Date(now.getFullYear(), now.getMonth(), 1);
+      });
+      setWinterSelectedDay((current) => current === todayKey ? current : todayKey);
+    }
+
+    if (lastSeen !== todayKey) {
+      setWinterArcLifecycle({ synced: true, rollover: Boolean(lastSeen && lastSeen !== todayKey) });
+      localStorage.setItem(storageKey("winter-last-seen-date"), todayKey);
+    } else {
+      setWinterArcLifecycle((current) => ({ ...current, synced: true }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const day = winterMonthData.days?.[winterSelectedDay];
+    setWinterSleep(Number(winterMonthData.sleep?.[winterSelectedDay] || day?.sleep || 8));
+    setWinterReflection(winterMonthData.reflection || { win: "", lesson: "", improve: "", goal: "" });
+  }, [winterMonthKey, winterSelectedDay, winterArc]);
+
+  const updateWinterMonthByKey = (monthKey, updater) => {
+    setWinterArc((current) => {
+      const existing = current.months?.[monthKey] || { days: {}, sleep: {}, checkins: {}, reflection: {} };
+      const nextMonth = updater(existing);
+      return { ...current, months: { ...current.months, [monthKey]: nextMonth } };
+    });
+  };
+
+  const updateWinterMonth = (updater) => {
+    setWinterArc((current) => {
+      const existing = current.months?.[winterMonthKey] || { days: {}, sleep: {}, checkins: {}, reflection: {} };
+      const nextMonth = updater(existing);
+      return { ...current, months: { ...current.months, [winterMonthKey]: nextMonth } };
+    });
+  };
+
+  const toggleWinterMission = (missionId, dateKey = winterSelectedDay) => {
+    const mission = winterMissions.find((item) => item.id === missionId);
+    const currentDay = winterMonthData.days?.[dateKey] || {};
+    const nextValue = !currentDay[missionId];
+    setWinterSelectedMission(missionId);
+    updateWinterMonth((month) => {
+      const monthDay = month.days?.[dateKey] || {};
+      return { ...month, days: { ...month.days, [dateKey]: { ...monthDay, [missionId]: nextValue } } };
+    });
+    if (dateKey === winterTodayKey && mission) {
+      setGoals((currentGoals) => currentGoals.map((goal) =>
+        goal.source === "winter-carryover" && goal.winterMissionId === missionId && goal.dueDate === dateKey
+          ? { ...goal, progress: nextValue ? 1 : 0 }
+          : goal
+      ));
+    }
+  };
+
+  const updateWinterMissionMeta = (missionId, field, value, dateKey = winterSelectedDay) => {
+    updateWinterMonth((month) => ({
+      ...month,
+      missionMeta: {
+        ...(month.missionMeta || {}),
+        [dateKey]: { ...(month.missionMeta?.[dateKey] || {}), [missionId]: { ...(month.missionMeta?.[dateKey]?.[missionId] || {}), [field]: value } },
+      },
+    }));
+  };
+
+  const setWinterMissionStatus = (missionId, status) => {
+    updateWinterMissionMeta(missionId, "status", status);
+    const labels = { planned: "Mission planned", "in-progress": "Mission in progress", blocked: "Mission marked blocked", skipped: "Mission skipped for today" };
+    setWinterMissionToast(labels[status] || "Mission updated");
+    window.setTimeout(() => setWinterMissionToast(null), 1600);
+  };
+
+  const saveWinterMissionNote = (missionId, note) => {
+    updateWinterMissionMeta(missionId, "note", note);
+  };
+
+  const prepareWinterTomorrow = () => {
+    const tomorrow = new Date();
+    tomorrow.setHours(0, 0, 0, 0);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowKey = getDateKey(tomorrow);
+    const tomorrowMonthKey = getWinterMonthKey(tomorrow);
+    const todayData = winterMonthData.days?.[winterTodayKey] || {};
+    const unfinished = winterMissions.filter((mission) => !todayData[mission.id]);
+    if (!unfinished.length) {
+      setWinterMissionToast("Tomorrow starts clean — all today's missions are done.");
+      window.setTimeout(() => setWinterMissionToast(null), 1800);
+      return;
+    }
+    updateWinterMonthByKey(tomorrowMonthKey, (month) => ({
+      ...month,
+      days: { ...(month.days || {}), [tomorrowKey]: { ...(month.days?.[tomorrowKey] || {}), ...Object.fromEntries(unfinished.map((mission) => [mission.id, false])) } },
+      missionMeta: { ...(month.missionMeta || {}), [tomorrowKey]: { ...(month.missionMeta?.[tomorrowKey] || {}), ...Object.fromEntries(unfinished.map((mission) => [mission.id, { ...(month.missionMeta?.[tomorrowKey]?.[mission.id] || {}), status: "planned", carryover: true, sourceDate: winterTodayKey }])) } },
+    }));
+    const existing = goals.filter((goal) => goal.source === "winter-carryover" && goal.dueDate === tomorrowKey);
+    const additions = unfinished.filter((mission) => !existing.some((goal) => goal.winterMissionId === mission.id)).map((mission) => ({
+      id: `winter-${winterTodayKey}-${mission.id}-planned`, name: `Winter Arc: ${mission.title}`, category: "Winter Arc", target: 1, progress: 0, dueDate: tomorrowKey, icon: mission.icon, source: "winter-carryover", sourceDate: winterTodayKey, winterMissionId: mission.id,
+    }));
+    if (additions.length) setGoals((currentGoals) => [...currentGoals, ...additions]);
+    setWinterMissionToast(`${unfinished.length} mission${unfinished.length > 1 ? "s" : ""} planned for tomorrow.`);
+    window.setTimeout(() => setWinterMissionToast(null), 1800);
+  };
+
+  const winterDayScore = (dateKey) => {
+    const day = winterMonthData.days?.[dateKey] || {};
+    return winterMissions.filter((mission) => day[mission.id]).length;
+  };
+
+  const finishWinterDay = (dateKey = winterTodayKey) => {
+    if (dateKey !== winterTodayKey) return;
+    const alreadyClosed = Boolean(winterMonthData.dayMeta?.[dateKey]?.closedAt);
+    if (alreadyClosed) return;
+    const completed = winterDayScore(dateKey);
+    const earnedXp = winterMissions
+      .filter((mission) => winterMonthData.days?.[dateKey]?.[mission.id])
+      .reduce((sum, mission) => sum + mission.xp, 0);
+    const perfect = completed === winterMissions.length;
+    updateWinterMonth((month) => ({
+      ...month,
+      dayMeta: { ...(month.dayMeta || {}), [dateKey]: { ...(month.dayMeta?.[dateKey] || {}), closedAt: new Date().toISOString(), earnedXp, perfect } },
+    }));
+    setWinterDayCelebration({ completed, total: winterMissions.length, earnedXp: earnedXp + (perfect ? 50 : 0), perfect });
+  };
+
+  const winterDayClosed = Boolean(winterMonthData.dayMeta?.[winterSelectedDay]?.closedAt);
+
+  const winterDailyMetrics = useMemo(() => {
+    const score = winterDayScore(winterSelectedDay);
+    const day = winterMonthData.days?.[winterSelectedDay] || {};
+    const completed = winterMissions.filter((mission) => day[mission.id]);
+    const left = winterMissions.filter((mission) => !day[mission.id]);
+    const xp = completed.reduce((sum, mission) => sum + mission.xp, 0);
+    const possibleXp = winterMissions.reduce((sum, mission) => sum + mission.xp, 0);
+    const highPriorityLeft = left.filter((mission) => mission.priority === "HIGH");
+    const progress = winterMissions.length ? Math.round((score / winterMissions.length) * 100) : 0;
+    return { score, completed, left, xp, possibleXp, highPriorityLeft, progress, perfect: score === winterMissions.length };
+  }, [winterMonthData, winterSelectedDay, winterMissions]);
+
+  const exportWinterArcData = () => {
+    const payload = { exportedAt: new Date().toISOString(), month: winterMonthKey, winterArc, habits, goals };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `habbit-winter-arc-${winterMonthKey}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setWinterMissionToast("Winter Arc backup exported.");
+    window.setTimeout(() => setWinterMissionToast(null), 1800);
+  };
+
+  const copyWinterDailyBrief = async () => {
+    const left = winterDailyMetrics.left.map((mission) => mission.title).join(", ") || "Nothing";
+    const text = `Winter Arc · ${winterSelectedDay}\nCompleted: ${winterDailyMetrics.score}/${winterMissions.length}\nNext: ${winterDailyMetrics.left[0]?.title || "Finish the day"}\nLeft: ${left}\nSleep: ${winterDailyBriefing.sleep || "Not logged"}h`;
+    try { await navigator.clipboard.writeText(text); setWinterMissionToast("Daily brief copied."); } catch { setWinterMissionToast("Daily brief ready to share."); }
+    window.setTimeout(() => setWinterMissionToast(null), 1800);
+  };
+
+  const saveWinterSleep = (value, dateKey = winterSelectedDay) => {
+    const hours = Math.max(0, Math.min(12, Number(value) || 0));
+    setWinterSleep(hours);
+    updateWinterMonth((month) => ({ ...month, sleep: { ...month.sleep, [dateKey]: hours } }));
+  };
+
+  const saveWinterReflection = () => {
+    updateWinterMonth((month) => ({ ...month, reflection: winterReflection }));
+    setWinterReflectionSaved(true);
+    window.setTimeout(() => setWinterReflectionSaved(false), 1800);
+  };
+
+  const setWinterCheckin = (week, field, value) => {
+    updateWinterMonth((month) => ({
+      ...month,
+      checkins: { ...month.checkins, [week]: { ...(month.checkins?.[week] || {}), [field]: value } },
+    }));
+  };
+
+  const winterCalendar = useMemo(() => {
+    const year = winterMonthDate.getFullYear();
+    const month = winterMonthDate.getMonth();
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month + 1, 0);
+    const days = [];
+    for (let i = 0; i < first.getDay(); i += 1) days.push(null);
+    for (let day = 1; day <= last.getDate(); day += 1) days.push(new Date(year, month, day));
+    return { days, totalDays: last.getDate() };
+  }, [winterMonthDate]);
+
+  const winterDailyStatus = useMemo(() => {
+    const day = winterMonthData.days?.[winterSelectedDay] || {};
+    const completed = winterMissions.filter((mission) => day[mission.id]);
+    const left = winterMissions.filter((mission) => !day[mission.id]);
+    return {
+      completed,
+      left,
+      next: left[0] || null,
+      score: completed.length,
+      isToday: winterSelectedDay === winterTodayKey,
+    };
+  }, [winterMonthData, winterSelectedDay, winterTodayKey]);
+
+  const winterSelectedMissionData = useMemo(() => {
+    const mission = winterMissions.find((item) => item.id === winterSelectedMission);
+    if (!mission) return null;
+    const meta = winterMonthData.missionMeta?.[winterSelectedDay]?.[mission.id] || {};
+    return { mission, meta };
+  }, [winterMissions, winterSelectedMission, winterMonthData, winterSelectedDay]);
+
+  const winterTomorrowPlan = useMemo(() => {
+    const tomorrow = new Date();
+    tomorrow.setHours(0, 0, 0, 0);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const key = getDateKey(tomorrow);
+    const data = winterMonthKey === getWinterMonthKey(tomorrow) ? (winterMonthData.days?.[key] || {}) : {};
+    const unfinishedToday = winterDailyStatus.left;
+    const alreadyPlanned = winterMissions.filter((mission) => data[mission.id]);
+    return {
+      key,
+      label: tomorrow.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }),
+      unfinishedToday,
+      alreadyPlanned,
+      total: winterMissions.length,
+    };
+  }, [winterDailyStatus, winterMonthData, winterMonthKey]);
+
+  const winterDailyBriefing = useMemo(() => {
+    const sleep = Number(winterMonthData.sleep?.[winterSelectedDay] || 0);
+    const priority = winterDailyMetrics.left.find((mission) => mission.priority === "HIGH") || winterDailyMetrics.left[0] || null;
+    const carryoverCount = winterTomorrowPlan.unfinishedToday.length;
+    let readiness = "Ready to start";
+    if (winterDailyMetrics.perfect) readiness = "Day complete";
+    else if (sleep > 0 && sleep < 6) readiness = "Recovery first";
+    else if (priority) readiness = "Focus on priority";
+    return { sleep, priority, carryoverCount, readiness };
+  }, [winterMonthData, winterSelectedDay, winterDailyMetrics, winterTomorrowPlan]);
+
+  const winterDayTimeline = useMemo(() => {
+    const groups = { MORNING: [], AFTERNOON: [], EVENING: [], NIGHT: [] };
+    winterMissions.forEach((mission) => {
+      const hour = Number((mission.time || "12").split(":")[0]) || 12;
+      const group = hour < 12 ? "MORNING" : hour < 17 ? "AFTERNOON" : hour < 21 ? "EVENING" : "NIGHT";
+      groups[group].push(mission);
+    });
+    return groups;
+  }, [winterMissions]);
+
+  const winterMonthStats = useMemo(() => {
+    const days = Object.values(winterMonthData.days || {});
+    const completedMissions = days.reduce((sum, day) => sum + winterMissions.filter((m) => day[m.id]).length, 0);
+    const possible = winterCalendar.totalDays * winterMissions.length;
+    const completion = possible ? Math.round((completedMissions / possible) * 100) : 0;
+    const activeDays = days.filter((day) => winterMissions.some((m) => day[m.id])).length;
+    const sleepValues = Object.values(winterMonthData.sleep || {}).map(Number).filter((n) => n > 0);
+    const avgSleep = sleepValues.length ? (sleepValues.reduce((a, b) => a + b, 0) / sleepValues.length).toFixed(1) : "0.0";
+    return { completedMissions, completion, activeDays, avgSleep };
+  }, [winterMonthData, winterCalendar.totalDays]);
+
+  const winterArcScore = Math.min(100, Math.round(winterMonthStats.completion * 0.8 + Math.min(20, winterMonthStats.activeDays * 2)));
+
+
+  const winterArcInsights = useMemo(() => {
+    const dayScores = [];
+    Object.values(winterArc.months || {}).forEach((month) => {
+      Object.entries(month.days || {}).forEach(([dateKey, day]) => {
+        dayScores.push({ dateKey, score: winterMissions.filter((m) => day?.[m.id]).length });
+      });
+    });
+
+    const byDate = new Map(dayScores.map((item) => [item.dateKey, item.score]));
+    const activeDates = [...byDate.entries()].filter(([, score]) => score > 0).map(([date]) => date).sort();
+    const perfectDays = [...byDate.values()].filter((score) => score === winterMissions.length).length;
+    const totalMissions = dayScores.reduce((sum, item) => sum + item.score, 0);
+    const currentCursor = new Date();
+    let currentStreak = 0;
+    while (byDate.get(getDateKey(currentCursor)) > 0) {
+      currentStreak += 1;
+      currentCursor.setDate(currentCursor.getDate() - 1);
+    }
+
+    let bestStreak = 0;
+    let running = 0;
+    let previous = null;
+    activeDates.forEach((dateKey) => {
+      const date = new Date(`${dateKey}T00:00:00`);
+      if (previous) {
+        const diff = Math.round((date - previous) / (1000 * 60 * 60 * 24));
+        running = diff === 1 ? running + 1 : 1;
+      } else {
+        running = 1;
+      }
+      bestStreak = Math.max(bestStreak, running);
+      previous = date;
+    });
+
+    const xp = totalMissions * 20 + perfectDays * 50 + currentStreak * 10;
+    const level = Math.max(1, Math.floor(xp / 250) + 1);
+    const levelStart = (level - 1) * 250;
+    const levelProgress = Math.min(100, Math.round(((xp - levelStart) / 250) * 100));
+    const unlocked = [
+      totalMissions >= 1,
+      currentStreak >= 3,
+      currentStreak >= 7,
+      perfectDays >= 1,
+      perfectDays >= 7,
+      totalMissions >= 100,
+    ].filter(Boolean).length;
+
+    let motivation = "The arc starts with one decision: show up today.";
+    if (winterDayScore(winterTodayKey) === winterMissions.length) motivation = "Perfect day. You are building evidence, not excuses.";
+    else if (currentStreak >= 7) motivation = "Seven days of proof. Protect the streak, then raise the standard.";
+    else if (winterMonthStats.completion >= 70) motivation = "Momentum is visible. Finish the month stronger than you started it.";
+    else if (winterMonthStats.completion >= 35) motivation = "You have momentum. One completed mission is enough to move the line today.";
+
+    return { currentStreak, bestStreak, perfectDays, totalMissions, xp, level, levelProgress, unlocked, motivation };
+  }, [winterArc, winterMonthStats, winterTodayKey]);
+
+  const winterAchievements = [
+    ["first-mission", "FIRST SIGNAL", "Complete your first mission", winterArcInsights.totalMissions >= 1, "✦"],
+    ["three-day", "FROST 3", "Hold a 3-day Arc streak", winterArcInsights.currentStreak >= 3, "❄"],
+    ["seven-day", "WINTER WARRIOR", "Hold a 7-day Arc streak", winterArcInsights.currentStreak >= 7, "⚡"],
+    ["perfect-day", "PERFECT DAY", "Complete all missions in one day", winterArcInsights.perfectDays >= 1, "◆"],
+    ["perfect-week", "PERFECT WEEK", "Create 7 perfect days", winterArcInsights.perfectDays >= 7, "◇"],
+    ["hundred", "100 MISSIONS", "Complete 100 missions", winterArcInsights.totalMissions >= 100, "★"],
+  ];
+
+
+  const winterProgressIntel = useMemo(() => {
+    const currentYear = winterMonthDate.getFullYear();
+    const currentMonth = winterMonthDate.getMonth();
+    const monthKeys = [];
+    for (let offset = 5; offset >= 0; offset -= 1) {
+      const date = new Date(currentYear, currentMonth - offset, 1);
+      monthKeys.push({
+        key: getWinterMonthKey(date),
+        label: date.toLocaleDateString("en-US", { month: "short" }),
+        days: new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate(),
+      });
+    }
+
+    const monthly = monthKeys.map(({ key, label, days }) => {
+      const data = winterArc.months?.[key] || {};
+      const loggedDays = Object.values(data.days || {});
+      const missions = loggedDays.reduce(
+        (sum, day) => sum + winterMissions.filter((mission) => day?.[mission.id]).length,
+        0
+      );
+      const possible = days * winterMissions.length;
+      return {
+        key,
+        label,
+        completion: possible ? Math.round((missions / possible) * 100) : 0,
+        missions,
+        activeDays: loggedDays.filter((day) => winterMissions.some((mission) => day?.[mission.id])).length,
+      };
+    });
+
+    const current = monthly[monthly.length - 1];
+    const previous = monthly[monthly.length - 2];
+    const delta = current.completion - previous.completion;
+    const lastSeven = [];
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const date = new Date();
+      date.setDate(date.getDate() - offset);
+      const key = getDateKey(date);
+      const score = winterDayScore(key);
+      lastSeven.push({ key, label: date.toLocaleDateString("en-US", { weekday: "short" }), score, percent: Math.round((score / winterMissions.length) * 100) });
+    }
+
+    const projected = Math.min(100, Math.round(
+      currentMonth === new Date().getMonth() && currentYear === new Date().getFullYear()
+        ? Math.max(current.completion, (current.completion / Math.max(1, new Date().getDate())) * new Date(currentYear, currentMonth + 1, 0).getDate())
+        : current.completion
+    ));
+
+    return { monthly, current, previous, delta, lastSeven, projected };
+  }, [winterArc, winterMonthDate, winterMissions, winterMonthStats]);
+
+  const winterMonthlyReflectionComplete = [
+    winterReflection.win,
+    winterReflection.lesson,
+    winterReflection.improve,
+    winterReflection.goal,
+  ].filter((value) => value?.trim()).length;
+
+  const winterMilestones = [
+    ["ten", "10 MISSIONS", "Build your first real block of consistency.", winterArcInsights.totalMissions >= 10, "10"],
+    ["twentyfive", "25 MISSIONS", "Prove the system is becoming a routine.", winterArcInsights.totalMissions >= 25, "25"],
+    ["fifty", "50 MISSIONS", "Cross the halfway mark to elite consistency.", winterArcInsights.totalMissions >= 50, "50"],
+    ["hundred", "100 MISSIONS", "Become a hundred-mission finisher.", winterArcInsights.totalMissions >= 100, "100"],
+    ["fourteen", "14 DAY STREAK", "Hold the Arc for two straight weeks.", winterArcInsights.bestStreak >= 14, "14"],
+    ["thirty", "30 DAY STREAK", "Turn discipline into a monthly identity.", winterArcInsights.bestStreak >= 30, "30"],
+    ["tenperfect", "10 PERFECT DAYS", "Complete every mission ten times.", winterArcInsights.perfectDays >= 10, "10"],
+    ["level5", "LEVEL 5", "Reach a serious Arc progression milestone.", winterArcInsights.level >= 5, "5"],
+    ["level10", "LEVEL 10", "Build a long-term transformation record.", winterArcInsights.level >= 10, "10"],
+    ["reflection", "MONTH CLOSED", "Finish a full monthly reflection.", winterMonthlyReflectionComplete === 4, "✓"],
+  ];
+
+  useEffect(() => {
+    const unlocked = winterMilestones.filter((item) => item[3]).map((item) => item[0]);
+    const seenKey = storageKey("winter-seen-milestones");
+    let seen = [];
+    try { seen = JSON.parse(localStorage.getItem(seenKey) || "[]"); } catch { seen = []; }
+    const fresh = unlocked.find((id) => !seen.includes(id));
+    if (fresh) {
+      const item = winterMilestones.find((entry) => entry[0] === fresh);
+      setWinterAchievementToast({ title: item?.[1] || "MILESTONE UNLOCKED", description: item?.[2] || "You reached a new Winter Arc milestone." });
+      localStorage.setItem(seenKey, JSON.stringify([...new Set([...seen, ...unlocked])]));
+    }
+  }, [winterMilestones, storageKey]);
+
+  const winterWeeklyStats = useMemo(() => {
+    const weeks = [];
+    const totalDays = winterCalendar.totalDays;
+    for (let week = 1; week <= 5; week += 1) {
+      const startDay = (week - 1) * 7 + 1;
+      if (startDay > totalDays) continue;
+      const endDay = Math.min(totalDays, startDay + 6);
+      const dates = [];
+      for (let day = startDay; day <= endDay; day += 1) {
+        dates.push(getDateKey(new Date(winterMonthDate.getFullYear(), winterMonthDate.getMonth(), day)));
+      }
+      const completed = dates.reduce((sum, key) => sum + winterDayScore(key), 0);
+      const possible = dates.length * winterMissions.length;
+      const completion = possible ? Math.round((completed / possible) * 100) : 0;
+      const activeDays = dates.filter((key) => winterDayScore(key) > 0).length;
+      const sleeps = dates.map((key) => Number(winterMonthData.sleep?.[key] || 0)).filter((value) => value > 0);
+      const avgSleep = sleeps.length ? sleeps.reduce((a, b) => a + b, 0) / sleeps.length : 0;
+      const sleepScore = Math.min(100, Math.round((avgSleep / 8) * 100));
+      const checkin = winterMonthData.checkins?.[week] || {};
+      const fieldsFilled = [checkin.weight, checkin.win, checkin.wrong, checkin.focus].filter(Boolean).length;
+      const score = Math.round(completion * 0.7 + sleepScore * 0.2 + fieldsFilled * 2.5);
+      weeks.push({ week, startDay, endDay, completed, possible, completion, activeDays, avgSleep, score, checkin });
+    }
+    return weeks;
+  }, [winterCalendar.totalDays, winterMonthDate, winterMonthData, winterMissions]);
+
+
+  const winterNextMonthLabel = new Date(
+    winterMonthDate.getFullYear(),
+    winterMonthDate.getMonth() + 1,
+    1
+  ).toLocaleDateString("en-US", { month: "long" });
+
   const [reminders, setReminders] = useState(() => {
     try {
       const savedReminders = localStorage.getItem(storageKey("reminders"));
@@ -282,6 +785,52 @@ function App({ authUser, guestMode, onLogout, theme, onThemeChange }) {
     dueDate: "",
     icon: "🎯",
   });
+
+  const carryWinterMissedMissionsToGoals = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const winterStart = new Date(2026, 9, 1);
+    if (yesterday < winterStart) return;
+
+    const yesterdayKey = getDateKey(yesterday);
+    const yesterdayMonthKey = getWinterMonthKey(yesterday);
+    const yesterdayMonth = winterArc.months?.[yesterdayMonthKey];
+    const yesterdayData = yesterdayMonth?.days?.[yesterdayKey];
+    if (!yesterdayData) return;
+
+    const missed = winterMissions.filter((mission) => !yesterdayData[mission.id]);
+    if (!missed.length) return;
+
+    const promptKey = `winter-carryover-prompt-${winterTodayKey}`;
+    if (localStorage.getItem(promptKey)) return;
+
+    const missedIds = missed.map((mission) => mission.id);
+    const existingCarryovers = goals.filter((goal) => goal.source === "winter-carryover" && goal.dueDate === winterTodayKey);
+    const newGoals = missed
+      .filter((mission) => !existingCarryovers.some((goal) => goal.winterMissionId === mission.id && goal.sourceDate === yesterdayKey))
+      .map((mission) => ({
+        id: `winter-${yesterdayKey}-${mission.id}`,
+        name: `Winter Arc: ${mission.title}`,
+        category: "Winter Arc",
+        target: 1,
+        progress: 0,
+        dueDate: winterTodayKey,
+        icon: mission.icon,
+        source: "winter-carryover",
+        sourceDate: yesterdayKey,
+        winterMissionId: mission.id,
+      }));
+
+    if (newGoals.length) setGoals((currentGoals) => [...currentGoals, ...newGoals]);
+    localStorage.setItem(promptKey, "1");
+    setWinterCarryoverPrompt({ date: winterTodayKey, yesterdayKey, missedIds, goals: [...existingCarryovers, ...newGoals] });
+  };
+
+  useEffect(() => {
+    carryWinterMissedMissionsToGoals();
+  }, [winterArc, goals, winterTodayKey]);
 
   useEffect(() => {
     localStorage.setItem(storageKey("habits"), JSON.stringify(habits));
@@ -1064,6 +1613,7 @@ const badges = useMemo(() => {
             ["Calendar", "▦"],
             ["Goals", "◎"],
             ["Rewards", "✦"],
+            ["Winter Arc", "❄"],
             ["Reminders", "🔔"],
           ].map(([name, icon]) => (
             <button
@@ -2104,6 +2654,353 @@ const badges = useMemo(() => {
               </div>
             </div>
           </section>
+        )}
+
+        {activeNav === "Winter Arc" && (
+          <section className={`winter-arc-page winter-tab-${winterView}`}>
+            <div className="winter-arc-backdrop" />
+            <header className="winter-arc-hero">
+              <div>
+                <p className="winter-kicker">WINTER ARC · PERSONAL TRANSFORMATION MODE</p>
+                <h1>Become the version of you<br /><span>you said you would.</span></h1>
+                <p className="winter-subtitle">A continuous monthly arc. October starts it — November, December and every month after keep the journey alive.</p>
+              </div>
+              <div className="winter-score-orb">
+                <div className="winter-score-ring" style={{ "--winter-score": `${winterArcScore * 3.6}deg` }}>
+                  <div><strong>{winterArcScore}</strong><small>ARC SCORE</small></div>
+                </div>
+              </div>
+            </header>
+
+            <section className="winter-command-bar">
+              <button type="button" onClick={() => setWinterMonthDate(new Date(winterMonthDate.getFullYear(), winterMonthDate.getMonth() - 1, 1))}>‹</button>
+              <div><span>YOUR CURRENT ARC</span><strong>{winterMonthLabel}</strong></div>
+              <button type="button" onClick={() => setWinterMonthDate(new Date(winterMonthDate.getFullYear(), winterMonthDate.getMonth() + 1, 1))}>›</button>
+              <button type="button" className="winter-today-btn" onClick={() => { setWinterMonthDate(new Date()); setWinterSelectedDay(winterTodayKey); }}>Today</button>
+            </section>
+
+            <nav className="winter-section-nav" aria-label="Winter Arc sections">
+              {[
+                ["overview", "⌂", "Command Center"],
+                ["daily", "◈", "Daily Missions"],
+                ["recovery", "☾", "Recovery"],
+                ["weekly", "↗", "Weekly Battle"],
+                ["progress", "✦", "Progress"],
+                ["reflection", "✎", "Reflection"],
+              ].map(([id, icon, label]) => (
+                <button key={id} type="button" className={winterView === id ? "active" : ""} onClick={() => setWinterView(id)} aria-current={winterView === id ? "page" : undefined}>
+                  <span>{icon}</span>{label}
+                </button>
+              ))}
+            </nav>
+
+            {winterArcLifecycle.rollover && (
+              <section className="winter-view winter-view-overview winter-glass winter-rollover-banner" role="status">
+                <div><span>NEW ARC DAY</span><strong>{winterTodayKey}</strong><small>Your calendar rolled forward automatically. Previous months remain in history.</small></div>
+                <button type="button" onClick={() => setWinterArcLifecycle((current) => ({ ...current, rollover: false }))}>Got it</button>
+              </section>
+            )}
+
+            <div className="winter-view winter-view-overview winter-stats-grid">
+              <article><span>MISSIONS DONE</span><strong>{winterMonthStats.completedMissions}</strong><small>This month</small></article>
+              <article><span>ARC STREAK</span><strong>{winterArcInsights.currentStreak}</strong><small>Best {winterArcInsights.bestStreak} days</small></article>
+              <article><span>MONTH COMPLETION</span><strong>{winterMonthStats.completion}%</strong><small>Across all missions</small></article>
+              <article><span>AVG SLEEP</span><strong>{winterMonthStats.avgSleep}h</strong><small>Logged this month</small></article>
+            </div>
+
+            <section className="winter-view winter-view-overview winter-glass winter-briefing-card">
+              <div className="winter-briefing-main">
+                <span>ARC BRIEFING</span>
+                <h2>{winterDailyBriefing.readiness}</h2>
+                <p>{winterDailyBriefing.priority ? `Your next high-impact move: ${winterDailyBriefing.priority.title}.` : "Protect your momentum and finish the day intentionally."}</p>
+              </div>
+              <div className="winter-briefing-stats">
+                <div><small>SLEEP</small><strong>{winterDailyBriefing.sleep ? `${winterDailyBriefing.sleep}h` : "—"}</strong></div>
+                <div><small>LEFT</small><strong>{winterDailyMetrics.left.length}</strong></div>
+                <div><small>CARRYOVER</small><strong>{winterDailyBriefing.carryoverCount}</strong></div>
+              </div>
+              <div className="winter-briefing-actions"><button type="button" onClick={copyWinterDailyBrief}>Copy Daily Brief</button><button type="button" onClick={exportWinterArcData}>Export Arc Data</button></div>
+            </section>
+
+            <section className="winter-view winter-view-overview winter-glass winter-command-actions">
+              <div><span>DAILY CONTROL</span><strong>{winterDailyMetrics.score}/{winterMissions.length} missions complete</strong><small>{winterDailyMetrics.left.length ? `${winterDailyMetrics.left.length} remaining · ${winterDailyMetrics.xp} XP earned` : "All missions complete · perfect day"}</small></div>
+              <button type="button" onClick={() => setWinterView("daily")}>{winterDailyMetrics.left.length ? "Continue Today's Missions →" : "Review Today's Arc →"}</button>
+            </section>
+
+            <section className="winter-view winter-view-overview winter-glass winter-daily-summary">
+              <div className="winter-daily-summary-head">
+                <div><span>DAILY COMMAND</span><h2>{winterDailyStatus.isToday ? "Today's Status" : `${winterSelectedDay} Recap`}</h2><p>See what you completed, what is left, and your next move.</p></div>
+                <div className="winter-daily-score"><strong>{winterDailyStatus.score}/{winterMissions.length}</strong><small>completed</small></div>
+              </div>
+              <div className="winter-daily-columns">
+                <div className="winter-daily-block completed"><span>✓ COMPLETED</span><strong>{winterDailyStatus.completed.length ? winterDailyStatus.completed.length : "Nothing yet"}</strong><small>{winterDailyStatus.completed.map((item) => item.title).join(" · ") || "Start your first mission."}</small></div>
+                <div className="winter-daily-block next"><span>→ NEXT TO DO</span><strong>{winterDailyStatus.next ? winterDailyStatus.next.title : "All missions complete"}</strong><small>{winterDailyStatus.next ? winterDailyStatus.next.text : "Protect the streak and finish strong."}</small></div>
+                <div className="winter-daily-block left"><span>○ LEFT</span><strong>{winterDailyStatus.left.length}</strong><small>{winterDailyStatus.left.map((item) => item.title).join(" · ") || "Nothing left for this day."}</small></div>
+              </div>
+            </section>
+
+            <section className="winter-view winter-view-overview winter-level-panel">
+              <div className="winter-level-copy"><span>ARC LEVEL {winterArcInsights.level}</span><strong>{winterArcInsights.xp.toLocaleString()} XP</strong><small>{winterArcInsights.unlocked}/6 achievements unlocked</small></div>
+              <div className="winter-level-track"><span style={{ width: `${winterArcInsights.levelProgress}%` }} /></div>
+              <div className="winter-level-foot"><span>{winterArcInsights.levelProgress}% to Level {winterArcInsights.level + 1}</span><b>+{winterArcInsights.currentStreak * 10} streak XP</b></div>
+            </section>
+
+            <section className="winter-view winter-view-overview winter-motivation-card">
+              <div className="winter-motivation-mark">✦</div>
+              <div><span>TODAY'S SIGNAL</span><strong>{winterArcInsights.motivation}</strong><small>Consistency becomes identity when you repeat it.</small></div>
+            </section>
+
+            <section className="winter-view winter-view-daily winter-glass winter-tomorrow-panel">
+              <div className="winter-tomorrow-copy">
+                <span>TOMORROW PROTOCOL</span>
+                <h2>Prepare the next day before you close this one.</h2>
+                <p>{winterTomorrowPlan.unfinishedToday.length ? `${winterTomorrowPlan.unfinishedToday.length} unfinished mission${winterTomorrowPlan.unfinishedToday.length > 1 ? "s" : ""} will be available as carryover.` : "Today is clean. Tomorrow starts with a fresh mission board."}</p>
+              </div>
+              <div className="winter-tomorrow-meta">
+                <strong>{winterTomorrowPlan.label}</strong>
+                <small>{winterTomorrowPlan.alreadyPlanned.length}/{winterTomorrowPlan.total} already planned</small>
+                <div className="winter-tomorrow-actions"><button type="button" className="winter-plan-tomorrow-btn" onClick={prepareWinterTomorrow}>Plan Tomorrow</button><button type="button" onClick={() => { const d = new Date(winterTomorrowPlan.key + "T00:00:00"); setWinterMonthDate(new Date(d.getFullYear(), d.getMonth(), 1)); setWinterSelectedDay(winterTomorrowPlan.key); setWinterView("daily"); }}>Open Tomorrow →</button></div>
+              </div>
+            </section>
+
+            <div className="winter-view winter-view-daily winter-main-grid">
+              <section className="winter-glass winter-calendar-card">
+                <div className="winter-section-head"><div><span>ARC MAP</span><h2>Daily Mission Calendar</h2></div><b>{winterMonthLabel}</b></div>
+                <div className="winter-weekdays">{["SUN","MON","TUE","WED","THU","FRI","SAT"].map((d) => <span key={d}>{d}</span>)}</div>
+                <div className="winter-calendar-grid">
+                  {winterCalendar.days.map((date, index) => {
+                    if (!date) return <div key={`blank-${index}`} className="winter-day blank" />;
+                    const key = getDateKey(date);
+                    const score = winterDayScore(key);
+                    const selected = key === winterSelectedDay;
+                    const today = key === winterTodayKey;
+                    return <button type="button" key={key} className={`winter-day ${selected ? "selected" : ""} ${today ? "today" : ""} score-${score}`} onClick={() => setWinterSelectedDay(key)}>
+                      <span>{date.getDate()}</span><i>{score ? `${score}/${winterMissions.length}` : "—"}</i>
+                    </button>;
+                  })}
+                </div>
+                <div className="winter-legend"><span><i className="legend-dot low" /> 1–2</span><span><i className="legend-dot mid" /> 3–4</span><span><i className="legend-dot high" /> 5–6</span></div>
+              </section>
+
+              <section className="winter-glass winter-missions-card">
+                <div className="winter-section-head"><div><span>DAY {winterSelectedDay}</span><h2>Daily Missions</h2></div><strong>{winterDayScore(winterSelectedDay)}/{winterMissions.length}</strong></div>
+                <div className="winter-daily-command-strip">
+                  <div><span>TODAY'S PROGRESS</span><strong>{winterDailyMetrics.progress}%</strong></div>
+                  <div><span>XP EARNED</span><strong>+{winterDailyMetrics.xp}</strong></div>
+                  <div><span>HIGH PRIORITY LEFT</span><strong>{winterDailyMetrics.highPriorityLeft.length}</strong></div>
+                  <button type="button" className="winter-finish-day-btn" disabled={winterDayClosed || !winterDailyMetrics.perfect} onClick={() => finishWinterDay()}>
+                    {winterDayClosed ? "✓ Day Closed" : winterDailyMetrics.perfect ? "Finish Today's Arc" : "Finish Missions First"}
+                  </button>
+                </div>
+                <div className="winter-timeline">
+                  {Object.entries(winterDayTimeline).map(([group, missions]) => (
+                    <div key={group} className="winter-timeline-group">
+                      <div className="winter-timeline-label">{group}</div>
+                      <div className="winter-mission-list">
+                        {missions.map((mission) => {
+                          const done = Boolean(winterMonthData.days?.[winterSelectedDay]?.[mission.id]);
+                          return <button type="button" key={mission.id} className={`winter-mission winter-mission-v2 ${done ? "done" : ""}`} onClick={() => toggleWinterMission(mission.id)}>
+                            <span className="mission-icon">{mission.icon}</span>
+                            <div className="winter-mission-main"><strong>{mission.title}</strong><small>{mission.text}</small><span className="winter-mission-meta"><em className={`priority-${mission.priority.toLowerCase()}`}>{mission.priority}</em><i>{mission.time}</i><b>+{mission.xp} XP</b></span></div>
+                            <b className="winter-mission-check">{done ? "✓" : "○"}</b>
+                          </button>;
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {winterSelectedMissionData && (
+                  <div className="winter-mission-control">
+                    <div className="winter-mission-control-head"><div><span>MISSION CONTROL</span><strong>{winterSelectedMissionData.mission.title}</strong></div><em>{winterSelectedMissionData.meta.status || "planned"}</em></div>
+                    <div className="winter-mission-status-actions">
+                      {[
+                        ["planned", "Plan"],
+                        ["in-progress", "In Progress"],
+                        ["blocked", "Blocked"],
+                        ["skipped", "Skip"],
+                      ].map(([status, label]) => <button type="button" key={status} className={winterSelectedMissionData.meta.status === status ? "active" : ""} onClick={() => setWinterMissionStatus(winterSelectedMissionData.mission.id, status)}>{label}</button>)}
+                    </div>
+                    <textarea value={winterSelectedMissionData.meta.note || ""} onChange={(e) => saveWinterMissionNote(winterSelectedMissionData.mission.id, e.target.value)} placeholder="Add a quick note: what helped, what blocked you, what to remember tomorrow..." />
+                  </div>
+                )}
+
+                <div className={`winter-day-close-note ${winterDailyMetrics.perfect ? "ready" : ""}`}>
+                  <span>{winterDailyMetrics.perfect ? "✦" : "→"}</span>
+                  <div><strong>{winterDailyMetrics.perfect ? "Perfect day ready to close." : `${winterDailyMetrics.left.length} mission${winterDailyMetrics.left.length === 1 ? "" : "s"} still standing.`}</strong><small>{winterDailyMetrics.perfect ? "Finish the day to lock the result into your Arc history." : "Complete the remaining missions to unlock the Day Finish."}</small></div>
+                </div>
+              </section>
+            </div>
+
+            <div className="winter-secondary-grid">
+              <section className="winter-view winter-view-recovery winter-glass winter-sleep-card">
+                <div className="winter-section-head"><div><span>RECOVERY PROTOCOL</span><h2>Sleep Tracker</h2></div><strong>{winterSleep}h</strong></div>
+                <p>Log the sleep that fuels tomorrow's discipline.</p>
+                <input className="winter-range" type="range" min="0" max="12" step="0.5" value={winterSleep} onChange={(e) => saveWinterSleep(e.target.value)} />
+                <div className="winter-range-labels"><span>0h</span><span>6h</span><span>12h</span></div>
+              </section>
+
+              <section className="winter-view winter-view-weekly winter-glass winter-checkin-card winter-weekly-battle">
+                <div className="winter-section-head"><div><span>WEEKLY BATTLE</span><h2>Weekly Check-in</h2></div><span>{winterWeeklyStats.filter((item) => item.score >= 80).length} strong weeks</span></div>
+                <div className="winter-week-table-head"><span>WEEK</span><span>MISSION</span><span>SLEEP</span><span>SCORE</span></div>
+                <div className="winter-checkin-list">
+                  {winterWeeklyStats.map((item) => (
+                    <div key={item.week} className="winter-checkin-block">
+                      <div className="winter-checkin-summary">
+                        <div className="winter-week-badge"><b>W{item.week}</b><small>Day {item.startDay}–{item.endDay}</small></div>
+                        <div className="winter-week-stat"><strong>{item.completion}%</strong><small>{item.completed}/{item.possible} missions</small></div>
+                        <div className="winter-week-stat"><strong>{item.avgSleep ? `${item.avgSleep.toFixed(1)}h` : "—"}</strong><small>avg sleep</small></div>
+                        <div className="winter-week-score"><strong>{item.score}</strong><small>/100</small></div>
+                      </div>
+                      <div className="winter-week-fields">
+                        <label><span>Weight</span><input placeholder="e.g. 68.5 kg" value={item.checkin.weight || ""} onChange={(e) => setWinterCheckin(item.week,"weight",e.target.value)} /></label>
+                        <label><span>Biggest Win</span><input placeholder="What went right?" value={item.checkin.win || ""} onChange={(e) => setWinterCheckin(item.week,"win",e.target.value)} /></label>
+                        <label><span>What Went Wrong</span><input placeholder="Be honest." value={item.checkin.wrong || ""} onChange={(e) => setWinterCheckin(item.week,"wrong",e.target.value)} /></label>
+                        <label><span>Next Week Focus</span><input placeholder="One clear focus" value={item.checkin.focus || ""} onChange={(e) => setWinterCheckin(item.week,"focus",e.target.value)} /></label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            <div className="winter-view winter-view-progress winter-insight-grid">
+              <section className="winter-glass winter-achievements-card">
+                <div className="winter-section-head"><div><span>PROOF OF WORK</span><h2>Arc Achievements</h2></div><strong>{winterArcInsights.unlocked}/6</strong></div>
+                <div className="winter-achievement-grid">
+                  {winterAchievements.map(([id, title, description, unlocked, icon]) => (
+                    <article key={id} className={`winter-achievement ${unlocked ? "unlocked" : "locked"}`}>
+                      <div className="winter-achievement-icon">{unlocked ? icon : "·"}</div>
+                      <div><strong>{title}</strong><small>{description}</small></div>
+                      <b>{unlocked ? "UNLOCKED" : "LOCKED"}</b>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="winter-glass winter-analytics-card">
+                <div className="winter-section-head"><div><span>MONTHLY INTELLIGENCE</span><h2>Arc Analytics</h2></div><strong>{winterMonthStats.completion}%</strong></div>
+                <div className="winter-analytics-bars">
+                  <div><span>Mission completion</span><i><b style={{ width: `${winterMonthStats.completion}%` }} /></i><strong>{winterMonthStats.completion}%</strong></div>
+                  <div><span>Active days</span><i><b style={{ width: `${Math.min(100, Math.round((winterMonthStats.activeDays / winterCalendar.totalDays) * 100))}%` }} /></i><strong>{winterMonthStats.activeDays}/{winterCalendar.totalDays}</strong></div>
+                  <div><span>Sleep average</span><i><b style={{ width: `${Math.min(100, Math.round((Number(winterMonthStats.avgSleep) / 8) * 100))}%` }} /></i><strong>{winterMonthStats.avgSleep}h</strong></div>
+                </div>
+                <div className="winter-analytics-foot"><span>{winterMonthStats.completedMissions} missions logged</span><span>{winterArcInsights.perfectDays} perfect days across your Arc</span></div>
+              </section>
+            </div>
+
+
+            <section className="winter-view winter-view-progress winter-progress-intelligence">
+              <div className="winter-progress-header">
+                <div><span>ARC INTELLIGENCE</span><h2>See the pattern, not just the score.</h2><p>Your recent rhythm, month-over-month movement and projected finish.</p></div>
+                <div className={`winter-trend-pill ${winterProgressIntel.delta >= 0 ? "up" : "down"}`}>
+                  <strong>{winterProgressIntel.delta >= 0 ? "↗" : "↘"} {Math.abs(winterProgressIntel.delta)}%</strong>
+                  <small>vs previous month</small>
+                </div>
+              </div>
+
+              <div className="winter-intel-grid">
+                <article className="winter-intel-card winter-intel-week">
+                  <div className="winter-intel-card-head"><span>LAST 7 DAYS</span><strong>{winterProgressIntel.lastSeven.reduce((sum, day) => sum + day.score, 0)} missions</strong></div>
+                  <div className="winter-seven-bars">
+                    {winterProgressIntel.lastSeven.map((day) => (
+                      <div key={day.key} title={`${day.label}: ${day.percent}%`}><i style={{ height: `${Math.max(8, day.percent)}%` }} /><small>{day.label}</small></div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="winter-intel-card">
+                  <span>PROJECTED MONTH</span>
+                  <strong className="winter-intel-big">{winterProgressIntel.projected}%</strong>
+                  <small>Current completion: {winterProgressIntel.current.completion}%</small>
+                  <div className="winter-intel-track"><i style={{ width: `${winterProgressIntel.projected}%` }} /></div>
+                </article>
+
+                <article className="winter-intel-card">
+                  <span>ACTIVE DAYS</span>
+                  <strong className="winter-intel-big">{winterProgressIntel.current.activeDays}</strong>
+                  <small>Days you actually showed up this month.</small>
+                  <div className="winter-intel-mini-row"><b>{winterProgressIntel.current.missions}</b><span>missions logged</span></div>
+                </article>
+              </div>
+
+              <div className="winter-month-history">
+                <div className="winter-section-head"><div><span>ARC HISTORY</span><h2>Six-month momentum</h2></div><small>Previous months stay visible.</small></div>
+                <div className="winter-month-history-grid">
+                  {winterProgressIntel.monthly.map((item) => (
+                    <button type="button" key={item.key} className={item.key === winterMonthKey ? "active" : ""} onClick={() => { const [year, month] = item.key.split("-").map(Number); setWinterMonthDate(new Date(year, month - 1, 1)); setWinterSelectedDay(getDateKey(new Date(year, month - 1, 1))); setWinterView("progress"); }}>
+                      <span>{item.label}</span><strong>{item.completion}%</strong><i><b style={{ height: `${Math.max(5, item.completion)}%` }} /></i><small>{item.activeDays} active days</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="winter-milestones">
+                <div className="winter-section-head"><div><span>LONG GAME</span><h2>Milestone Board</h2></div><small>{winterMilestones.filter((item) => item[3]).length}/{winterMilestones.length} unlocked</small></div>
+                <div className="winter-milestone-grid">
+                  {winterMilestones.map(([id, title, description, unlocked, icon]) => (
+                    <article key={id} className={`winter-milestone ${unlocked ? "unlocked" : "locked"}`}>
+                      <div className="winter-milestone-icon">{unlocked ? "✓" : icon}</div>
+                      <div><strong>{title}</strong><small>{description}</small></div>
+                      <span>{unlocked ? "UNLOCKED" : "LOCKED"}</span>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="winter-view winter-view-reflection winter-glass winter-reflection-card winter-reflection-enhanced">
+              <div className="winter-section-head"><div><span>MONTHLY REFLECTION</span><h2>Close {winterMonthLabel} with intention.</h2><small>{winterMonthlyReflectionComplete}/4 prompts complete · Next month: {winterNextMonthLabel}</small></div><button type="button" className="winter-save-btn" onClick={saveWinterReflection}>{winterReflectionSaved ? "✓ Saved" : "Save Reflection"}</button></div>
+              <div className="winter-reflection-grid">
+                {[["win","Biggest Win","What are you proud of?"],["lesson","Biggest Lesson","What did this month teach you?"],["improve","What I Need To Improve","Where will you tighten the system?"],["goal","Next Month's Goal","What is the one thing that matters most?"]].map(([key,title,placeholder]) => <label key={key}><span>{title}</span><textarea value={winterReflection[key] || ""} placeholder={placeholder} onChange={(e) => setWinterReflection((r) => ({...r,[key]:e.target.value}))} /></label>)}
+              </div>
+            </section>
+
+            <div className="winter-view winter-view-reflection winter-footer-quote"><span>❄</span><strong>Don't chase motivation. Build evidence that you can trust yourself.</strong><small>One day. Then another. Then another.</small></div>
+          </section>
+        )}
+
+        {winterDayCelebration && (
+          <div className="winter-celebration-overlay" role="dialog" aria-modal="true" aria-labelledby="winter-day-finished-title">
+            <div className="winter-celebration-card">
+              <div className="winter-celebration-orb">{winterDayCelebration.perfect ? "✦" : "✓"}</div>
+              <p className="winter-kicker">DAY COMPLETE</p>
+              <h2 id="winter-day-finished-title">{winterDayCelebration.perfect ? "Perfect Arc Day." : "You showed up today."}</h2>
+              <p>{winterDayCelebration.completed}/{winterDayCelebration.total} missions completed. Your record is saved.</p>
+              <div className="winter-celebration-stats">
+                <span><b>+{winterDayCelebration.earnedXp}</b><small>XP EARNED</small></span>
+                <span><b>{winterDayCelebration.perfect ? "PERFECT" : "SOLID"}</b><small>DAY STATUS</small></span>
+              </div>
+              <button type="button" onClick={() => { setWinterDayCelebration(null); setWinterView("overview"); }}>Continue →</button>
+            </div>
+          </div>
+        )}
+
+        {winterAchievementToast && (
+          <div className="winter-achievement-toast" role="status">
+            <div className="winter-achievement-icon">✦</div>
+            <div><span>MILESTONE UNLOCKED</span><strong>{winterAchievementToast.title}</strong><small>{winterAchievementToast.description}</small></div>
+            <button type="button" onClick={() => setWinterAchievementToast(null)}>×</button>
+          </div>
+        )}
+
+        {winterMissionToast && <div className="winter-mission-toast" role="status">{winterMissionToast}</div>}
+
+        {winterCarryoverPrompt && (
+          <div className="winter-carryover-overlay" role="dialog" aria-modal="true" aria-labelledby="winter-carryover-title">
+            <div className="winter-carryover-modal">
+              <div className="winter-carryover-icon">↻</div>
+              <p className="winter-kicker">SMART CARRYOVER</p>
+              <h2 id="winter-carryover-title">Yesterday's unfinished missions are ready.</h2>
+              <p>I've added the unfinished Winter Arc missions to <strong>today's Goals</strong>. Do you want to keep them for today?</p>
+              <div className="winter-carryover-list">
+                {winterCarryoverPrompt.goals.map((goal) => <span key={goal.id}>{goal.icon} {goal.name.replace("Winter Arc: ", "")}</span>)}
+              </div>
+              <div className="winter-carryover-actions">
+                <button type="button" className="winter-carryover-keep" onClick={() => setWinterCarryoverPrompt(null)}>Keep in Today's Goals</button>
+                <button type="button" className="winter-carryover-remove" onClick={() => { const ids = new Set(winterCarryoverPrompt.goals.map((goal) => goal.id)); setGoals((currentGoals) => currentGoals.filter((goal) => !ids.has(goal.id))); setWinterCarryoverPrompt(null); }}>Remove Carryovers</button>
+              </div>
+            </div>
+          </div>
         )}
 
         {activeNav === "Reminders" && (
